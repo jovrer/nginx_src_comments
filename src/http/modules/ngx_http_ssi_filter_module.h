@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -64,12 +63,6 @@ typedef struct {
 
     ngx_list_t               *variables;
     ngx_array_t              *blocks;
-
-#if (NGX_PCRE)
-    ngx_uint_t                ncaptures;
-    int                      *captures;
-    u_char                   *captures_data;
-#endif
 
     unsigned                  conditional:2;
     unsigned                  encoding:2;

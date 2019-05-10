@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -13,8 +12,8 @@
 
 /* FreeBSD, NetBSD, OpenBSD */
 
-#define ngx_init_setproctitle(log) NGX_OK
-#define ngx_setproctitle(title)    setproctitle("%s", title)
+#define ngx_init_setproctitle(log)
+#define ngx_setproctitle           setproctitle
 
 
 #else /* !NGX_HAVE_SETPROCTITLE */
@@ -39,7 +38,7 @@ void ngx_setproctitle(char *title);
 
 #else
 
-#define ngx_init_setproctitle(log) NGX_OK
+#define ngx_init_setproctitle(log)
 #define ngx_setproctitle(title)
 
 #endif /* OSes */

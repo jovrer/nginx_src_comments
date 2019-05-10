@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -9,7 +8,6 @@
 #define _NGX_PROCESS_H_INCLUDED_
 
 
-#include <ngx_setaffinity.h>
 #include <ngx_setproctitle.h>
 
 
@@ -29,7 +27,7 @@ typedef struct {
     char               *name;
 
     unsigned            respawn:1;
-    unsigned            just_spawn:1;
+    unsigned            just_respawn:1;
     unsigned            detached:1;
     unsigned            exiting:1;
     unsigned            exited:1;
@@ -47,10 +45,9 @@ typedef struct {
 #define NGX_MAX_PROCESSES         1024
 
 #define NGX_PROCESS_NORESPAWN     -1
-#define NGX_PROCESS_JUST_SPAWN    -2
-#define NGX_PROCESS_RESPAWN       -3
-#define NGX_PROCESS_JUST_RESPAWN  -4
-#define NGX_PROCESS_DETACHED      -5
+#define NGX_PROCESS_RESPAWN       -2
+#define NGX_PROCESS_JUST_RESPAWN  -3
+#define NGX_PROCESS_DETACHED      -4
 
 
 #define ngx_getpid   getpid

@@ -1,6 +1,5 @@
 
 # Copyright (C) Igor Sysoev
-# Copyright (C) Nginx, Inc.
 
 
 # gcc 2.7.2.3, 2.8.1, 2.95.4, egcs-1.1.2
@@ -52,6 +51,8 @@ esac
 #NGX_GCC_OPT="-Os"
 NGX_GCC_OPT="-O"
 
+CFLAGS="$CFLAGS $NGX_GCC_OPT"
+
 #CFLAGS="$CFLAGS -fomit-frame-pointer"
 
 case $CPU in
@@ -89,6 +90,7 @@ case $CPU in
         # build 32-bit UltraSparc binary
         CPU_OPT="-m32"
         CORE_LINK="$CORE_LINK -m32"
+        CC_AUX_FLAGS="$CC_AUX_FLAGS -m32"
         NGX_CPU_CACHE_LINE=64
     ;;
 
@@ -96,6 +98,7 @@ case $CPU in
         # build 64-bit UltraSparc binary
         CPU_OPT="-m64"
         CORE_LINK="$CORE_LINK -m64"
+        CC_AUX_FLAGS="$CC_AUX_FLAGS -m64"
         NGX_CPU_CACHE_LINE=64
     ;;
 
@@ -105,12 +108,12 @@ case $CPU in
         CPU_OPT="$CPU_OPT -falign-functions=32 -falign-labels=32"
         CPU_OPT="$CPU_OPT -falign-loops=32 -falign-jumps=32"
         CORE_LINK="$CORE_LINK -m64"
+        CC_AUX_FLAGS="$CC_AUX_FLAGS -m64"
         NGX_CPU_CACHE_LINE=128
     ;;
 
 esac
 
-CC_AUX_FLAGS="$CC_AUX_FLAGS $CPU_OPT"
 
 case "$NGX_GCC_VER" in
     2.7*)
@@ -128,6 +131,12 @@ else
     PCRE_OPT="$PCRE_OPT $PIPE"
 fi
 
+if [ ".$MD5_OPT" = "." ]; then
+    MD5_OPT="-O2 -fomit-frame-pointer $PIPE $CPU_OPT"
+else
+    MD5_OPT="$MD5_OPT $PIPE"
+fi
+
 if [ ".$ZLIB_OPT" = "." ]; then
     ZLIB_OPT="-O2 -fomit-frame-pointer $PIPE $CPU_OPT"
 else
@@ -143,24 +152,21 @@ CFLAGS="$CFLAGS ${NGX_GCC_OPT:--O} -W"
 CFLAGS="$CFLAGS -Wall -Wpointer-arith"
 #CFLAGS="$CFLAGS -Wconversion"
 #CFLAGS="$CFLAGS -Winline"
-#CFLAGS="$CFLAGS -Wmissing-prototypes"
+
 
 case "$NGX_GCC_VER" in
-    2.*)
+    3.* | 4.* )
         # we have a lot of the unused function arguments
-        CFLAGS="$CFLAGS -Wno-unused"
+        CFLAGS="$CFLAGS -Wno-unused-parameter"
+        CFLAGS="$CFLAGS -Wno-unused-function"
+        CFLAGS="$CFLAGS -Wunused-variable"
+        CFLAGS="$CFLAGS -Wunused-value"
+        #CFLAGS="$CFLAGS -Wunreachable-code"
     ;;
 
     *)
         # we have a lot of the unused function arguments
-        CFLAGS="$CFLAGS -Wno-unused-parameter"
-        # 4.2.1 shows the warning in wrong places
-        #CFLAGS="$CFLAGS -Wunreachable-code"
-
-        # deprecated system OpenSSL library on OS X
-        if [ "$NGX_SYSTEM" = "Darwin" ]; then
-            CFLAGS="$CFLAGS -Wno-deprecated-declarations"
-        fi
+        CFLAGS="$CFLAGS -Wno-unused"
     ;;
 esac
 

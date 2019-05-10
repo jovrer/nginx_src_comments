@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -13,16 +12,19 @@
 #include <ngx_core.h>
 
 
-typedef struct {
-    uint64_t  bytes;
-    uint32_t  a, b, c, d, e, f;
-    u_char    buffer[64];
-} ngx_sha1_t;
+#if (NGX_HAVE_OPENSSL_SHA1_H)
+#include <openssl/sha.h>
+#else
+#include <sha.h>
+#endif
 
 
-void ngx_sha1_init(ngx_sha1_t *ctx);
-void ngx_sha1_update(ngx_sha1_t *ctx, const void *data, size_t size);
-void ngx_sha1_final(u_char result[20], ngx_sha1_t *ctx);
+typedef SHA_CTX  ngx_sha1_t;
+
+
+#define ngx_sha1_init    SHA1_Init
+#define ngx_sha1_update  SHA1_Update
+#define ngx_sha1_final   SHA1_Final
 
 
 #endif /* _NGX_SHA1_H_INCLUDED_ */

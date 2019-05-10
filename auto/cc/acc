@@ -1,6 +1,5 @@
 
 # Copyright (C) Igor Sysoev
-# Copyright (C) Nginx, Inc.
 
 
 # aCC: HP ANSI C++ B3910B A.03.55.02
@@ -12,3 +11,4 @@ CC_TEST_FLAGS="-Ae"
 
 PCRE_OPT="$PCRE_OPT -Ae"
 ZLIB_OPT="$ZLIB_OPT -Ae"
+MD5_OPT="$MD5_OPT -Ae"

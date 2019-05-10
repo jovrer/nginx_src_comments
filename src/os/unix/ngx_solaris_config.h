@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -22,7 +21,6 @@
 #include <stddef.h>             /* offsetof() */
 #include <stdio.h>
 #include <stdlib.h>
-#include <ctype.h>
 #include <errno.h>
 #include <string.h>
 #include <signal.h>
@@ -30,8 +28,6 @@
 #include <grp.h>
 #include <dirent.h>
 #include <glob.h>
-#include <time.h>
-#include <sys/statvfs.h>        /* statvfs() */
 
 #include <sys/filio.h>          /* FIONBIO */
 #include <sys/uio.h>
@@ -55,20 +51,23 @@
 #include <inttypes.h>
 #include <crypt.h>
 
-#include <dlfcn.h>
-
 #define NGX_ALIGNMENT  _MAX_ALIGNMENT
 
 #include <ngx_auto_config.h>
 
 
-#if (NGX_HAVE_POSIX_SEM)
-#include <semaphore.h>
+#if (NGX_HAVE_POLL)
+#include <poll.h>
 #endif
 
 
-#if (NGX_HAVE_POLL)
-#include <poll.h>
+#if (NGX_HAVE_SENDFILE)
+#include <sys/sendfile.h>
+#endif
+
+
+#if (NGX_HAVE_AIO)
+#include <aio.h>
 #endif
 
 
@@ -80,11 +79,6 @@
 
 #if (NGX_HAVE_EVENTPORT)
 #include <port.h>
-#endif
-
-
-#if (NGX_HAVE_SENDFILE)
-#include <sys/sendfile.h>
 #endif
 
 
@@ -103,7 +97,6 @@
 
 
 #define NGX_HAVE_OS_SPECIFIC_INIT    1
-#define ngx_debug_init()
 
 
 extern char **environ;

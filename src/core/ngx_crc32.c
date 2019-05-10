@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -103,7 +102,7 @@ uint32_t *ngx_crc32_table_short = ngx_crc32_table16;
 
 
 ngx_int_t
-ngx_crc32_table_init(void)
+ngx_crc32_init(void)
 {
     void  *p;
 

@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -22,7 +21,8 @@ static ngx_inline void ngx_rbtree_right_rotate(ngx_rbtree_node_t **root,
 
 
 void
-ngx_rbtree_insert(ngx_rbtree_t *tree, ngx_rbtree_node_t *node)
+ngx_rbtree_insert(ngx_thread_volatile ngx_rbtree_t *tree,
+    ngx_rbtree_node_t *node)
 {
     ngx_rbtree_node_t  **root, *temp, *sentinel;
 
@@ -97,20 +97,28 @@ void
 ngx_rbtree_insert_value(ngx_rbtree_node_t *temp, ngx_rbtree_node_t *node,
     ngx_rbtree_node_t *sentinel)
 {
-    ngx_rbtree_node_t  **p;
-
     for ( ;; ) {
 
-        p = (node->key < temp->key) ? &temp->left : &temp->right;
+        if (node->key < temp->key) {
 
-        if (*p == sentinel) {
-            break;
+            if (temp->left == sentinel) {
+                temp->left = node;
+                break;
+            }
+
+            temp = temp->left;
+
+        } else {
+
+            if (temp->right == sentinel) {
+                temp->right = node;
+                break;
+            }
+
+            temp = temp->right;
         }
-
-        temp = *p;
     }
 
-    *p = node;
     node->parent = temp;
     node->left = sentinel;
     node->right = sentinel;
@@ -122,8 +130,6 @@ void
 ngx_rbtree_insert_timer_value(ngx_rbtree_node_t *temp, ngx_rbtree_node_t *node,
     ngx_rbtree_node_t *sentinel)
 {
-    ngx_rbtree_node_t  **p;
-
     for ( ;; ) {
 
         /*
@@ -133,19 +139,29 @@ ngx_rbtree_insert_timer_value(ngx_rbtree_node_t *temp, ngx_rbtree_node_t *node,
          * The comparison takes into account that overflow.
          */
 
-        /*  node->key < temp->key */
+        if ((ngx_rbtree_key_int_t) node->key - (ngx_rbtree_key_int_t) temp->key
+            < 0)
+        {
+            /*  node->key < temp->key */
 
-        p = ((ngx_rbtree_key_int_t) (node->key - temp->key) < 0)
-            ? &temp->left : &temp->right;
+            if (temp->left == sentinel) {
+                temp->left = node;
+                break;
+            }
 
-        if (*p == sentinel) {
-            break;
+            temp = temp->left;
+
+        } else {
+
+            if (temp->right == sentinel) {
+                temp->right = node;
+                break;
+            }
+
+            temp = temp->right;
         }
-
-        temp = *p;
     }
 
-    *p = node;
     node->parent = temp;
     node->left = sentinel;
     node->right = sentinel;
@@ -154,7 +170,8 @@ ngx_rbtree_insert_timer_value(ngx_rbtree_node_t *temp, ngx_rbtree_node_t *node,
 
 
 void
-ngx_rbtree_delete(ngx_rbtree_t *tree, ngx_rbtree_node_t *node)
+ngx_rbtree_delete(ngx_thread_volatile ngx_rbtree_t *tree,
+    ngx_rbtree_node_t *node)
 {
     ngx_uint_t           red;
     ngx_rbtree_node_t  **root, *sentinel, *subst, *temp, *w;
@@ -240,13 +257,13 @@ ngx_rbtree_delete(ngx_rbtree_t *tree, ngx_rbtree_node_t *node)
         if (subst->right != sentinel) {
             subst->right->parent = subst;
         }
-    }
 
-    /* DEBUG stuff */
-    node->left = NULL;
-    node->right = NULL;
-    node->parent = NULL;
-    node->key = 0;
+        /* DEBUG stuff */
+        node->left = NULL;
+        node->right = NULL;
+        node->parent = NULL;
+        node->key = 0;
+    }
 
     if (red) {
         return;

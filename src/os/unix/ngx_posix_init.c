@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -22,10 +21,7 @@ struct rlimit  rlmt;
 ngx_os_io_t ngx_os_io = {
     ngx_unix_recv,
     ngx_readv_chain,
-    ngx_udp_unix_recv,
-    ngx_unix_send,
-    ngx_udp_unix_send,
-    ngx_udp_unix_sendmsg_chain,
+    NULL,
     ngx_writev_chain,
     0
 };
@@ -34,8 +30,7 @@ ngx_os_io_t ngx_os_io = {
 ngx_int_t
 ngx_os_init(ngx_log_t *log)
 {
-    ngx_time_t  *tp;
-    ngx_uint_t   n;
+    ngx_uint_t  n;
 
 #if (NGX_HAVE_OS_SPECIFIC_INIT)
     if (ngx_os_specific_init(log) != NGX_OK) {
@@ -43,22 +38,16 @@ ngx_os_init(ngx_log_t *log)
     }
 #endif
 
-    if (ngx_init_setproctitle(log) != NGX_OK) {
-        return NGX_ERROR;
-    }
+    ngx_init_setproctitle(log);
 
     ngx_pagesize = getpagesize();
     ngx_cacheline_size = NGX_CPU_CACHE_LINE;
 
+    n = ngx_pagesize;
+
     for (n = ngx_pagesize; n >>= 1; ngx_pagesize_shift++) { /* void */ }
 
-#if (NGX_HAVE_SC_NPROCESSORS_ONLN)
     if (ngx_ncpu == 0) {
-        ngx_ncpu = sysconf(_SC_NPROCESSORS_ONLN);
-    }
-#endif
-
-    if (ngx_ncpu < 1) {
         ngx_ncpu = 1;
     }
 
@@ -66,20 +55,19 @@ ngx_os_init(ngx_log_t *log)
 
     if (getrlimit(RLIMIT_NOFILE, &rlmt) == -1) {
         ngx_log_error(NGX_LOG_ALERT, log, errno,
-                      "getrlimit(RLIMIT_NOFILE) failed");
+                      "getrlimit(RLIMIT_NOFILE) failed)");
         return NGX_ERROR;
     }
 
     ngx_max_sockets = (ngx_int_t) rlmt.rlim_cur;
 
-#if (NGX_HAVE_INHERITED_NONBLOCK || NGX_HAVE_ACCEPT4)
+#if (NGX_HAVE_INHERITED_NONBLOCK)
     ngx_inherited_nonblocking = 1;
 #else
     ngx_inherited_nonblocking = 0;
 #endif
 
-    tp = ngx_timeofday();
-    srandom(((unsigned) ngx_pid << 16) ^ tp->sec ^ tp->msec);
+    srandom(ngx_time());
 
     return NGX_OK;
 }
@@ -88,7 +76,7 @@ ngx_os_init(ngx_log_t *log)
 void
 ngx_os_status(ngx_log_t *log)
 {
-    ngx_log_error(NGX_LOG_NOTICE, log, 0, NGINX_VER_BUILD);
+    ngx_log_error(NGX_LOG_NOTICE, log, 0, NGINX_VER);
 
 #ifdef NGX_COMPILER
     ngx_log_error(NGX_LOG_NOTICE, log, 0, "built by " NGX_COMPILER);
@@ -103,8 +91,6 @@ ngx_os_status(ngx_log_t *log)
                   rlmt.rlim_cur, rlmt.rlim_max);
 }
 
-
-#if 0
 
 ngx_int_t
 ngx_posix_post_conf_init(ngx_log_t *log)
@@ -130,5 +116,3 @@ ngx_posix_post_conf_init(ngx_log_t *log)
 
     return NGX_OK;
 }
-
-#endif

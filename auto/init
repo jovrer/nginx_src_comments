@@ -1,6 +1,5 @@
 
 # Copyright (C) Igor Sysoev
-# Copyright (C) Nginx, Inc.
 
 
 NGX_MAKEFILE=$NGX_OBJS/Makefile
@@ -44,8 +43,36 @@ fi
 
 cat << END > Makefile
 
-default:	build
+build:
+	\$(MAKE) -f $NGX_MAKEFILE
+
+install:
+	\$(MAKE) -f $NGX_MAKEFILE install
 
 clean:
 	rm -rf Makefile $NGX_OBJS
+
+upgrade:
+	$NGX_SBIN_PATH -t
+
+	kill -USR2 \`cat $NGX_PID_PATH\`
+	sleep 1
+	test -f $NGX_PID_PATH.oldbin
+
+	kill -QUIT \`cat $NGX_PID_PATH.oldbin\`
+
+upgrade1:
+	# upgrade 0.1.x to 0.2+
+
+	$NGX_SBIN_PATH -t
+
+	cp $NGX_PID_PATH $NGX_PID_PATH.oldbin
+
+	kill -USR2 \`cat $NGX_PID_PATH\`
+	sleep 1
+	test -f $NGX_PID_PATH.oldbin
+
+	cp $NGX_PID_PATH $NGX_PID_PATH.newbin
+
+	kill -QUIT \`cat $NGX_PID_PATH.oldbin\`
 END

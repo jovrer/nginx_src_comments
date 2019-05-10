@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -20,20 +19,18 @@ u_long  ngx_freebsd_net_inet_tcp_sendspace;
 /* FreeBSD 4.9 */
 int     ngx_freebsd_machdep_hlt_logical_cpus;
 
+/* FreeBSD 5.0 */
+int     ngx_freebsd_kern_ipc_zero_copy_send;
 
-ngx_uint_t  ngx_freebsd_sendfile_nbytes_bug;
-ngx_uint_t  ngx_freebsd_use_tcp_nopush;
 
-ngx_uint_t  ngx_debug_malloc;
+ngx_uint_t ngx_freebsd_sendfile_nbytes_bug;
+ngx_uint_t ngx_freebsd_use_tcp_nopush;
 
 
 static ngx_os_io_t ngx_freebsd_io = {
     ngx_unix_recv,
     ngx_readv_chain,
-    ngx_udp_unix_recv,
     ngx_unix_send,
-    ngx_udp_unix_send,
-    ngx_udp_unix_sendmsg_chain,
 #if (NGX_HAVE_SENDFILE)
     ngx_freebsd_sendfile_chain,
     NGX_IO_SENDFILE
@@ -69,31 +66,25 @@ sysctl_t sysctls[] = {
       &ngx_freebsd_kern_ipc_somaxconn,
       sizeof(ngx_freebsd_kern_ipc_somaxconn), 0 },
 
+    { "kern.ipc.zero_copy.send",
+      &ngx_freebsd_kern_ipc_zero_copy_send,
+      sizeof(ngx_freebsd_kern_ipc_zero_copy_send), 0 },
+
     { NULL, NULL, 0, 0 }
 };
 
 
 void
-ngx_debug_init(void)
+ngx_debug_init()
 {
 #if (NGX_DEBUG_MALLOC)
 
-#if __FreeBSD_version >= 500014 && __FreeBSD_version < 1000011
+#if __FreeBSD_version >= 500014
     _malloc_options = "J";
-#elif __FreeBSD_version < 500014
+#else
     malloc_options = "J";
 #endif
 
-    ngx_debug_malloc = 1;
-
-#else
-    char  *mo;
-
-    mo = getenv("MALLOC_OPTIONS");
-
-    if (mo && ngx_strchr(mo, 'J')) {
-        ngx_debug_malloc = 1;
-    }
 #endif
 }
 
@@ -101,7 +92,7 @@ ngx_debug_init(void)
 ngx_int_t
 ngx_os_specific_init(ngx_log_t *log)
 {
-    int         version;
+    int         version, somaxconn;
     size_t      size;
     ngx_err_t   err;
     ngx_uint_t  i;
@@ -213,9 +204,12 @@ ngx_os_specific_init(ngx_log_t *log)
         ngx_ncpu = ngx_freebsd_hw_ncpu;
     }
 
-    if (version < 600008 && ngx_freebsd_kern_ipc_somaxconn > 32767) {
+    somaxconn = version < 600008 ? 32676 : 65535;
+
+    if (ngx_freebsd_kern_ipc_somaxconn > somaxconn) {
         ngx_log_error(NGX_LOG_ALERT, log, 0,
-                      "sysctl kern.ipc.somaxconn must be less than 32768");
+                      "sysctl kern.ipc.somaxconn must be no more than %d",
+                      somaxconn);
         return NGX_ERROR;
     }
 

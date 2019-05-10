@@ -1,6 +1,5 @@
 
 # Copyright (C) Igor Sysoev
-# Copyright (C) Nginx, Inc.
 
 
 echo "checking for $NGX_SYSTEM specific features"
@@ -17,10 +16,6 @@ case "$NGX_PLATFORM" in
 
     SunOS:*)
         . auto/os/solaris
-    ;;
-
-    Darwin:*)
-        . auto/os/darwin
     ;;
 
     win32)
@@ -41,6 +36,24 @@ case "$NGX_PLATFORM" in
 '
     ;;
 
+    Darwin:*)
+        have=NGX_DARWIN . auto/have_headers
+        have=NGX_HAVE_INHERITED_NONBLOCK . auto/have
+        CORE_INCS="$UNIX_INCS"
+        CORE_DEPS="$UNIX_DEPS $POSIX_DEPS"
+        CORE_SRCS="$UNIX_SRCS"
+
+        ngx_feature="atomic(3)"
+        ngx_feature_name=NGX_DARWIN_ATOMIC
+        ngx_feature_run=no
+        ngx_feature_incs="#include <libkern/OSAtomic.h>"
+        ngx_feature_path=
+        ngx_feature_libs=
+        ngx_feature_test="int32_t  lock, n;
+                          n = OSAtomicCompareAndSwap32Barrier(0, 1, lock)"
+        . auto/feature
+    ;;
+
     HP-UX:*)
         # HP/UX
         have=NGX_HPUX . auto/have_headers
@@ -48,7 +61,6 @@ case "$NGX_PLATFORM" in
         CORE_DEPS="$UNIX_DEPS $POSIX_DEPS"
         CORE_SRCS="$UNIX_SRCS"
         CC_AUX_FLAGS="$CC_AUX_FLAGS -D_XOPEN_SOURCE -D_XOPEN_SOURCE_EXTENDED=1"
-        CC_AUX_FLAGS="$CC_AUX_FLAGS -D_HPUX_ALT_XOPEN_SOCKET_API"
     ;;
 
     OSF1:*)
@@ -58,15 +70,6 @@ case "$NGX_PLATFORM" in
         CORE_INCS="$UNIX_INCS"
         CORE_DEPS="$UNIX_DEPS $POSIX_DEPS"
         CORE_SRCS="$UNIX_SRCS"
-    ;;
-
-    GNU:*)
-        # GNU Hurd
-        have=NGX_GNU_HURD . auto/have_headers
-        CORE_INCS="$UNIX_INCS"
-        CORE_DEPS="$UNIX_DEPS $POSIX_DEPS"
-        CORE_SRCS="$UNIX_SRCS"
-        CC_AUX_FLAGS="$CC_AUX_FLAGS -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64"
     ;;
 
     *)
@@ -103,7 +106,6 @@ case "$NGX_MACHINE" in
     ;;
 
     *)
-        have=NGX_ALIGNMENT value=16 . auto/define
         NGX_MACH_CACHE_LINE=32
     ;;
 

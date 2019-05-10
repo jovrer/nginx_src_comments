@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -17,10 +16,7 @@ char ngx_solaris_version[50];
 static ngx_os_io_t ngx_solaris_io = {
     ngx_unix_recv,
     ngx_readv_chain,
-    ngx_udp_unix_recv,
     ngx_unix_send,
-    ngx_udp_unix_send,
-    ngx_udp_unix_sendmsg_chain,
 #if (NGX_HAVE_SENDFILE)
     ngx_solaris_sendfilev_chain,
     NGX_IO_SENDFILE

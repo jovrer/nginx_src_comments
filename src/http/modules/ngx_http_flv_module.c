@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 #include <ngx_config.h>
@@ -24,7 +23,7 @@ static ngx_command_t  ngx_http_flv_commands[] = {
 };
 
 
-static u_char  ngx_flv_header[] = "FLV\x1\x5\0\0\0\x9\0\0\0\0";
+static u_char  ngx_flv_header[] = "FLV\x1\x1\0\0\0\x9\0\0\0\x9";
 
 
 static ngx_http_module_t  ngx_http_flv_module_ctx = {
@@ -61,16 +60,20 @@ ngx_module_t  ngx_http_flv_module = {
 static ngx_int_t
 ngx_http_flv_handler(ngx_http_request_t *r)
 {
-    u_char                    *last;
+    u_char                    *p;
     off_t                      start, len;
     size_t                     root;
+    ngx_fd_t                   fd;
     ngx_int_t                  rc;
     ngx_uint_t                 level, i;
-    ngx_str_t                  path, value;
+    ngx_str_t                  path;
+    ngx_err_t                  err;
     ngx_log_t                 *log;
     ngx_buf_t                 *b;
     ngx_chain_t                out[2];
-    ngx_open_file_info_t       of;
+    ngx_file_info_t            fi;
+    ngx_pool_cleanup_t        *cln;
+    ngx_pool_cleanup_file_t   *clnf;
     ngx_http_core_loc_conf_t  *clcf;
 
     if (!(r->method & (NGX_HTTP_GET|NGX_HTTP_HEAD))) {
@@ -81,83 +84,77 @@ ngx_http_flv_handler(ngx_http_request_t *r)
         return NGX_DECLINED;
     }
 
-    rc = ngx_http_discard_request_body(r);
+    /* TODO: Win32 */
+    if (r->zero_in_uri) {
+        return NGX_DECLINED;
+    }
 
-    if (rc != NGX_OK) {
+    rc = ngx_http_discard_body(r);
+
+    if (rc != NGX_OK && rc != NGX_AGAIN) {
         return rc;
     }
 
-    last = ngx_http_map_uri_to_path(r, &path, &root, 0);
-    if (last == NULL) {
+    if (ngx_http_map_uri_to_path(r, &path, &root, 0) == NULL) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
     log = r->connection->log;
 
-    path.len = last - path.data;
-
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, log, 0,
-                   "http flv filename: \"%V\"", &path);
+                   "http flv filename: \"%s\"", path.data);
 
-    clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
-
-    ngx_memzero(&of, sizeof(ngx_open_file_info_t));
-
-    of.read_ahead = clcf->read_ahead;
-    of.directio = clcf->directio;
-    of.valid = clcf->open_file_cache_valid;
-    of.min_uses = clcf->open_file_cache_min_uses;
-    of.errors = clcf->open_file_cache_errors;
-    of.events = clcf->open_file_cache_events;
-
-    if (ngx_http_set_disable_symlinks(r, clcf, &path, &of) != NGX_OK) {
+    cln = ngx_pool_cleanup_add(r->pool, sizeof(ngx_pool_cleanup_file_t));
+    if (cln == NULL) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    if (ngx_open_cached_file(clcf->open_file_cache, &path, &of, r->pool)
-        != NGX_OK)
-    {
-        switch (of.err) {
+    fd = ngx_open_file(path.data, NGX_FILE_RDONLY, NGX_FILE_OPEN, 0);
 
-        case 0:
-            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    if (fd == NGX_INVALID_FILE) {
+        err = ngx_errno;
 
-        case NGX_ENOENT:
-        case NGX_ENOTDIR:
-        case NGX_ENAMETOOLONG:
-
+        if (err == NGX_ENOENT
+            || err == NGX_ENOTDIR
+            || err == NGX_ENAMETOOLONG)
+        {
             level = NGX_LOG_ERR;
             rc = NGX_HTTP_NOT_FOUND;
-            break;
 
-        case NGX_EACCES:
-#if (NGX_HAVE_OPENAT)
-        case NGX_EMLINK:
-        case NGX_ELOOP:
-#endif
-
+        } else if (err == NGX_EACCES) {
             level = NGX_LOG_ERR;
             rc = NGX_HTTP_FORBIDDEN;
-            break;
 
-        default:
-
+        } else {
             level = NGX_LOG_CRIT;
             rc = NGX_HTTP_INTERNAL_SERVER_ERROR;
-            break;
         }
 
+        clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
+
         if (rc != NGX_HTTP_NOT_FOUND || clcf->log_not_found) {
-            ngx_log_error(level, log, of.err,
-                          "%s \"%s\" failed", of.failed, path.data);
+            ngx_log_error(level, log, err,
+                          ngx_open_file_n " \"%s\" failed", path.data);
         }
 
         return rc;
     }
 
-    if (!of.is_file) {
+    if (ngx_fd_info(fd, &fi) == NGX_FILE_ERROR) {
+        ngx_log_error(NGX_LOG_CRIT, log, ngx_errno,
+                      ngx_fd_info_n " \"%s\" failed", path.data);
 
-        if (ngx_close_file(of.fd) == NGX_FILE_ERROR) {
+        if (ngx_close_file(fd) == NGX_FILE_ERROR) {
+            ngx_log_error(NGX_LOG_ALERT, log, ngx_errno,
+                          ngx_close_file_n " \"%s\" failed", path.data);
+        }
+
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    if (!ngx_is_file(&fi)) {
+
+        if (ngx_close_file(fd) == NGX_FILE_ERROR) {
             ngx_log_error(NGX_LOG_ALERT, log, ngx_errno,
                           ngx_close_file_n " \"%s\" failed", path.data);
         }
@@ -165,17 +162,17 @@ ngx_http_flv_handler(ngx_http_request_t *r)
         return NGX_DECLINED;
     }
 
-    r->root_tested = !r->error_page;
-
     start = 0;
-    len = of.size;
+    len = ngx_file_size(&fi);
     i = 1;
 
     if (r->args.len) {
+        p = (u_char *) ngx_strnstr(r->args.data, "start=", r->args.len);
 
-        if (ngx_http_arg(r, (u_char *) "start", 5, &value) == NGX_OK) {
+        if (p) {
+            p += 6;
 
-            start = ngx_atoof(value.data, value.len);
+            start = ngx_atoof(p, r->args.len - (p - r->args.data));
 
             if (start == NGX_ERROR || start >= len) {
                 start = 0;
@@ -190,13 +187,16 @@ ngx_http_flv_handler(ngx_http_request_t *r)
 
     log->action = "sending flv to client";
 
+    cln->handler = ngx_pool_cleanup_file;
+    clnf = cln->data;
+
+    clnf->fd = fd;
+    clnf->name = path.data;
+    clnf->log = r->pool->log;
+
     r->headers_out.status = NGX_HTTP_OK;
     r->headers_out.content_length_n = len;
-    r->headers_out.last_modified_time = of.mtime;
-
-    if (ngx_http_set_etag(r) != NGX_OK) {
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    }
+    r->headers_out.last_modified_time = ngx_file_mtime(&fi);
 
     if (ngx_http_set_content_type(r) != NGX_OK) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
@@ -214,6 +214,9 @@ ngx_http_flv_handler(ngx_http_request_t *r)
 
         out[0].buf = b;
         out[0].next = &out[1];
+
+    } else {
+        r->allow_ranges = 1;
     }
 
 
@@ -227,8 +230,6 @@ ngx_http_flv_handler(ngx_http_request_t *r)
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    r->allow_ranges = 1;
-
     rc = ngx_http_send_header(r);
 
     if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) {
@@ -236,16 +237,15 @@ ngx_http_flv_handler(ngx_http_request_t *r)
     }
 
     b->file_pos = start;
-    b->file_last = of.size;
+    b->file_last = ngx_file_size(&fi);
 
     b->in_file = b->file_last ? 1: 0;
-    b->last_buf = (r == r->main) ? 1 : 0;
+    b->last_buf = 1;
     b->last_in_chain = 1;
 
-    b->file->fd = of.fd;
+    b->file->fd = fd;
     b->file->name = path;
     b->file->log = log;
-    b->file->directio = of.is_directio;
 
     out[1].buf = b;
     out[1].next = NULL;

@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -19,9 +18,15 @@ ngx_array_create(ngx_pool_t *p, ngx_uint_t n, size_t size)
         return NULL;
     }
 
-    if (ngx_array_init(a, p, n, size) != NGX_OK) {
+    a->elts = ngx_palloc(p, n * size);
+    if (a->elts == NULL) {
         return NULL;
     }
+
+    a->nelts = 0;
+    a->size = size;
+    a->nalloc = n;
+    a->pool = p;
 
     return a;
 }
@@ -34,12 +39,12 @@ ngx_array_destroy(ngx_array_t *a)
 
     p = a->pool;
 
-    if ((u_char *) a->elts + a->size * a->nalloc == p->d.last) {
-        p->d.last -= a->size * a->nalloc;
+    if ((u_char *) a->elts + a->size * a->nalloc == p->last) {
+        p->last -= a->size * a->nalloc;
     }
 
-    if ((u_char *) a + sizeof(ngx_array_t) == p->d.last) {
-        p->d.last = (u_char *) a;
+    if ((u_char *) a + sizeof(ngx_array_t) == p->last) {
+        p->last = (u_char *) a;
     }
 }
 
@@ -59,15 +64,14 @@ ngx_array_push(ngx_array_t *a)
 
         p = a->pool;
 
-        if ((u_char *) a->elts + size == p->d.last
-            && p->d.last + a->size <= p->d.end)
+        if ((u_char *) a->elts + size == p->last && p->last + a->size <= p->end)
         {
             /*
              * the array allocation is the last in the pool
              * and there is space for new allocation
              */
 
-            p->d.last += a->size;
+            p->last += a->size;
             a->nalloc++;
 
         } else {
@@ -107,15 +111,15 @@ ngx_array_push_n(ngx_array_t *a, ngx_uint_t n)
 
         p = a->pool;
 
-        if ((u_char *) a->elts + a->size * a->nalloc == p->d.last
-            && p->d.last + size <= p->d.end)
+        if ((u_char *) a->elts + a->size * a->nalloc == p->last
+            && p->last + size <= p->end)
         {
             /*
              * the array allocation is the last in the pool
              * and there is space for new allocation
              */
 
-            p->d.last += size;
+            p->last += size;
             a->nalloc += n;
 
         } else {

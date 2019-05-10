@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -9,8 +8,7 @@
 #include <ngx_core.h>
 
 
-ngx_int_t
-ngx_daemon(ngx_log_t *log)
+ngx_int_t ngx_daemon(ngx_log_t *log)
 {
     int  fd;
 

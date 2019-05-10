@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -14,8 +13,8 @@
 typedef struct {
     PerlInterpreter   *perl;
     HV                *nginx;
-    ngx_array_t       *modules;
-    ngx_array_t       *requires;
+    ngx_str_t          modules;
+    ngx_array_t        requires;
 } ngx_http_perl_main_conf_t;
 
 
@@ -31,11 +30,18 @@ typedef struct {
 } ngx_http_perl_variable_t;
 
 
+typedef struct {
+    SV                *sv;
+    PerlInterpreter   *perl;
+} ngx_http_perl_cleanup_t;
+
+
 #if (NGX_HTTP_SSI)
 static ngx_int_t ngx_http_perl_ssi(ngx_http_request_t *r,
     ngx_http_ssi_ctx_t *ssi_ctx, ngx_str_t **params);
 #endif
 
+static void ngx_http_perl_sleep_handler(ngx_http_request_t *r);
 static char *ngx_http_perl_init_interpreter(ngx_conf_t *cf,
     ngx_http_perl_main_conf_t *pmcf);
 static PerlInterpreter *ngx_http_perl_create_interpreter(ngx_conf_t *cf,
@@ -43,7 +49,7 @@ static PerlInterpreter *ngx_http_perl_create_interpreter(ngx_conf_t *cf,
 static ngx_int_t ngx_http_perl_run_requires(pTHX_ ngx_array_t *requires,
     ngx_log_t *log);
 static ngx_int_t ngx_http_perl_call_handler(pTHX_ ngx_http_request_t *r,
-    HV *nginx, SV *sub, SV **args, ngx_str_t *handler, ngx_str_t *rv);
+    HV *nginx, SV *sub, ngx_str_t **args, ngx_str_t *handler, ngx_str_t *rv);
 static void ngx_http_perl_eval_anon_sub(pTHX_ ngx_str_t *handler, SV **sv);
 
 static ngx_int_t ngx_http_perl_preconfiguration(ngx_conf_t *cf);
@@ -52,6 +58,8 @@ static char *ngx_http_perl_init_main_conf(ngx_conf_t *cf, void *conf);
 static void *ngx_http_perl_create_loc_conf(ngx_conf_t *cf);
 static char *ngx_http_perl_merge_loc_conf(ngx_conf_t *cf, void *parent,
     void *child);
+static char *ngx_http_perl_require(ngx_conf_t *cf, ngx_command_t *cmd,
+    void *conf);
 static char *ngx_http_perl(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static char *ngx_http_perl_set(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 
@@ -67,16 +75,16 @@ static ngx_command_t  ngx_http_perl_commands[] = {
 
     { ngx_string("perl_modules"),
       NGX_HTTP_MAIN_CONF|NGX_CONF_TAKE1,
-      ngx_conf_set_str_array_slot,
+      ngx_conf_set_str_slot,
       NGX_HTTP_MAIN_CONF_OFFSET,
       offsetof(ngx_http_perl_main_conf_t, modules),
       NULL },
 
     { ngx_string("perl_require"),
       NGX_HTTP_MAIN_CONF|NGX_CONF_TAKE1,
-      ngx_conf_set_str_array_slot,
+      ngx_http_perl_require,
       NGX_HTTP_MAIN_CONF_OFFSET,
-      offsetof(ngx_http_perl_main_conf_t, requires),
+      0,
       NULL },
 
     { ngx_string("perl"),
@@ -147,15 +155,10 @@ static ngx_http_ssi_command_t  ngx_http_perl_ssi_command = {
 #endif
 
 
-static ngx_str_t         ngx_null_name = ngx_null_string;
-static HV               *nginx_stash;
+static ngx_str_t  ngx_null_name = ngx_null_string;
 
-#if (NGX_HAVE_PERL_MULTIPLICITY)
-static ngx_uint_t        ngx_perl_term;
-#else
-static PerlInterpreter  *perl;
-#endif
 
+static HV  *nginx_stash;
 
 static void
 ngx_http_perl_xs_init(pTHX)
@@ -169,7 +172,10 @@ ngx_http_perl_xs_init(pTHX)
 static ngx_int_t
 ngx_http_perl_handler(ngx_http_request_t *r)
 {
-    r->main->count++;
+    /* TODO: Win32 */
+    if (r->zero_in_uri) {
+        return NGX_HTTP_NOT_FOUND;
+    }
 
     ngx_http_perl_handle_request(r);
 
@@ -207,7 +213,6 @@ ngx_http_perl_handle_request(ngx_http_request_t *r)
 
     dTHXa(pmcf->perl);
     PERL_SET_CONTEXT(pmcf->perl);
-    PERL_SET_INTERP(pmcf->perl);
 
     if (ctx->next == NULL) {
         plcf = ngx_http_get_module_loc_conf(r, ngx_http_perl_module);
@@ -225,17 +230,12 @@ ngx_http_perl_handle_request(ngx_http_request_t *r)
 
     }
 
-    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                   "perl handler done: %i", rc);
-
-    if (rc == NGX_DONE) {
-        ngx_http_finalize_request(r, rc);
-        return;
-    }
-
     if (rc > 600) {
         rc = NGX_OK;
     }
+
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                   "perl handler done: %i", rc);
 
     if (ctx->redirect_uri.len) {
         uri = ctx->redirect_uri;
@@ -248,14 +248,18 @@ ngx_http_perl_handle_request(ngx_http_request_t *r)
     ctx->filename.data = NULL;
     ctx->redirect_uri.len = 0;
 
+    if (ctx->sleep) {
+        ngx_add_timer(r->connection->write, (ngx_msec_t) ctx->sleep);
+        r->write_event_handler = ngx_http_perl_sleep_handler;
+        ctx->sleep = 0;
+    }
+
     if (ctx->done || ctx->next) {
-        ngx_http_finalize_request(r, NGX_DONE);
         return;
     }
 
     if (uri.len) {
         ngx_http_internal_redirect(r, &uri, &args);
-        ngx_http_finalize_request(r, NGX_DONE);
         return;
     }
 
@@ -268,7 +272,7 @@ ngx_http_perl_handle_request(ngx_http_request_t *r)
 }
 
 
-void
+static void
 ngx_http_perl_sleep_handler(ngx_http_request_t *r)
 {
     ngx_event_t  *wev;
@@ -284,7 +288,7 @@ ngx_http_perl_sleep_handler(ngx_http_request_t *r)
         return;
     }
 
-    if (ngx_handle_write_event(wev, 0) != NGX_OK) {
+    if (ngx_handle_write_event(wev, 0) == NGX_ERROR) {
         ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
     }
 }
@@ -323,7 +327,6 @@ ngx_http_perl_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v,
 
     dTHXa(pmcf->perl);
     PERL_SET_CONTEXT(pmcf->perl);
-    PERL_SET_INTERP(pmcf->perl);
 
     rc = ngx_http_perl_call_handler(aTHX_ r, pmcf->nginx, pv->sub, NULL,
                                     &pv->handler, &value);
@@ -357,10 +360,9 @@ static ngx_int_t
 ngx_http_perl_ssi(ngx_http_request_t *r, ngx_http_ssi_ctx_t *ssi_ctx,
     ngx_str_t **params)
 {
-    SV                         *sv, **asv;
+    SV                         *sv;
     ngx_int_t                   rc;
-    ngx_str_t                  *handler, **args;
-    ngx_uint_t                  i;
+    ngx_str_t                  *handler;
     ngx_http_perl_ctx_t        *ctx;
     ngx_http_perl_main_conf_t  *pmcf;
 
@@ -389,7 +391,6 @@ ngx_http_perl_ssi(ngx_http_request_t *r, ngx_http_ssi_ctx_t *ssi_ctx,
 
     dTHXa(pmcf->perl);
     PERL_SET_CONTEXT(pmcf->perl);
-    PERL_SET_INTERP(pmcf->perl);
 
 #if 0
 
@@ -411,31 +412,9 @@ ngx_http_perl_ssi(ngx_http_request_t *r, ngx_http_ssi_ctx_t *ssi_ctx,
 
     sv = newSVpvn((char *) handler->data, handler->len);
 
-    args = &params[NGX_HTTP_PERL_SSI_ARG];
-
-    if (args[0]) {
-
-        for (i = 0; args[i]; i++) { /* void */ }
-
-        asv = ngx_pcalloc(r->pool, (i + 1) * sizeof(SV *));
-
-        if (asv == NULL) {
-            SvREFCNT_dec(sv);
-            return NGX_ERROR;
-        }
-
-        asv[0] = (SV *) (uintptr_t) i;
-
-        for (i = 0; args[i]; i++) {
-            asv[i + 1] = newSVpvn((char *) args[i]->data, args[i]->len);
-        }
-
-    } else {
-        asv = NULL;
-    }
-
-    rc = ngx_http_perl_call_handler(aTHX_ r, pmcf->nginx, sv, asv, handler,
-                                    NULL);
+    rc = ngx_http_perl_call_handler(aTHX_ r, pmcf->nginx, sv,
+                                    &params[NGX_HTTP_PERL_SSI_ARG],
+                                    handler, NULL);
 
     SvREFCNT_dec(sv);
 
@@ -456,41 +435,27 @@ ngx_http_perl_ssi(ngx_http_request_t *r, ngx_http_ssi_ctx_t *ssi_ctx,
 static char *
 ngx_http_perl_init_interpreter(ngx_conf_t *cf, ngx_http_perl_main_conf_t *pmcf)
 {
-    ngx_str_t           *m;
-    ngx_uint_t           i;
 #if (NGX_HAVE_PERL_MULTIPLICITY)
-    ngx_pool_cleanup_t  *cln;
+    ngx_pool_cleanup_t       *cln;
 
     cln = ngx_pool_cleanup_add(cf->pool, 0);
     if (cln == NULL) {
         return NGX_CONF_ERROR;
     }
 
+#else
+    static PerlInterpreter  *perl;
 #endif
 
 #ifdef NGX_PERL_MODULES
-    if (pmcf->modules == NGX_CONF_UNSET_PTR) {
-
-        pmcf->modules = ngx_array_create(cf->pool, 1, sizeof(ngx_str_t));
-        if (pmcf->modules == NULL) {
-            return NGX_CONF_ERROR;
-        }
-
-        m = ngx_array_push(pmcf->modules);
-        if (m == NULL) {
-            return NGX_CONF_ERROR;
-        }
-
-        ngx_str_set(m, NGX_PERL_MODULES);
+    if (pmcf->modules.data == NULL) {
+        pmcf->modules.data = NGX_PERL_MODULES;
     }
 #endif
 
-    if (pmcf->modules != NGX_CONF_UNSET_PTR) {
-        m = pmcf->modules->elts;
-        for (i = 0; i < pmcf->modules->nelts; i++) {
-            if (ngx_conf_full_name(cf->cycle, &m[i], 0) != NGX_OK) {
-                return NGX_CONF_ERROR;
-            }
+    if (pmcf->modules.data) {
+        if (ngx_conf_full_name(cf->cycle, &pmcf->modules) != NGX_OK) {
+            return NGX_CONF_ERROR;
         }
     }
 
@@ -502,7 +467,7 @@ ngx_http_perl_init_interpreter(ngx_conf_t *cf, ngx_http_perl_main_conf_t *pmcf)
             return NGX_CONF_ERROR;
         }
 
-        if (ngx_http_perl_run_requires(aTHX_ pmcf->requires, cf->log)
+        if (ngx_http_perl_run_requires(aTHX_ &pmcf->requires, cf->log)
             != NGX_OK)
         {
             return NGX_CONF_ERROR;
@@ -550,9 +515,7 @@ ngx_http_perl_create_interpreter(ngx_conf_t *cf,
     int                n;
     STRLEN             len;
     SV                *sv;
-    char              *ver, **embedding;
-    ngx_str_t         *m;
-    ngx_uint_t         i;
+    char              *ver, *embedding[6];
     PerlInterpreter   *perl;
 
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, cf->log, 0, "create perl interpreter");
@@ -571,7 +534,6 @@ ngx_http_perl_create_interpreter(ngx_conf_t *cf,
 
     dTHXa(perl);
     PERL_SET_CONTEXT(perl);
-    PERL_SET_INTERP(perl);
 
     perl_construct(perl);
 
@@ -579,27 +541,20 @@ ngx_http_perl_create_interpreter(ngx_conf_t *cf,
     PL_exit_flags |= PERL_EXIT_DESTRUCT_END;
 #endif
 
-    n = (pmcf->modules != NGX_CONF_UNSET_PTR) ? pmcf->modules->nelts * 2 : 0;
-
-    embedding = ngx_palloc(cf->pool, (5 + n) * sizeof(char *));
-    if (embedding == NULL) {
-        goto fail;
-    }
-
     embedding[0] = "";
 
-    if (n++) {
-        m = pmcf->modules->elts;
-        for (i = 0; i < pmcf->modules->nelts; i++) {
-            embedding[2 * i + 1] = "-I";
-            embedding[2 * i + 2] = (char *) m[i].data;
-        }
+    if (pmcf->modules.data) {
+        embedding[1] = "-I";
+        embedding[2] = (char *) pmcf->modules.data;
+        n = 3;
+
+    } else {
+        n = 1;
     }
 
     embedding[n++] = "-Mnginx";
     embedding[n++] = "-e";
     embedding[n++] = "0";
-    embedding[n] = NULL;
 
     n = perl_parse(perl, ngx_http_perl_xs_init, n, embedding, NULL);
 
@@ -618,7 +573,7 @@ ngx_http_perl_create_interpreter(ngx_conf_t *cf,
         goto fail;
     }
 
-    if (ngx_http_perl_run_requires(aTHX_ pmcf->requires, cf->log) != NGX_OK) {
+    if (ngx_http_perl_run_requires(aTHX_ &pmcf->requires, cf->log) != NGX_OK) {
         goto fail;
     }
 
@@ -639,28 +594,26 @@ fail:
 static ngx_int_t
 ngx_http_perl_run_requires(pTHX_ ngx_array_t *requires, ngx_log_t *log)
 {
-    u_char      *err;
+    char       **script;
     STRLEN       len;
-    ngx_str_t   *script;
+    ngx_str_t    err;
     ngx_uint_t   i;
-
-    if (requires == NGX_CONF_UNSET_PTR) {
-        return NGX_OK;
-    }
 
     script = requires->elts;
     for (i = 0; i < requires->nelts; i++) {
 
-        require_pv((char *) script[i].data);
+        require_pv(script[i]);
 
         if (SvTRUE(ERRSV)) {
 
-            err = (u_char *) SvPV(ERRSV, len);
-            while (--len && (err[len] == CR || err[len] == LF)) { /* void */ }
+            err.data = (u_char *) SvPV(ERRSV, len);
+            for (len--; err.data[len] == LF || err.data[len] == CR; len--) {
+                /* void */
+            }
+            err.len = len + 1;
 
             ngx_log_error(NGX_LOG_EMERG, log, 0,
-                          "require_pv(\"%s\") failed: \"%*s\"",
-                          script[i].data, len + 1, err);
+                          "require_pv(\"%s\") failed: \"%V\"", script[i], &err);
 
             return NGX_ERROR;
         }
@@ -672,15 +625,14 @@ ngx_http_perl_run_requires(pTHX_ ngx_array_t *requires, ngx_log_t *log)
 
 static ngx_int_t
 ngx_http_perl_call_handler(pTHX_ ngx_http_request_t *r, HV *nginx, SV *sub,
-    SV **args, ngx_str_t *handler, ngx_str_t *rv)
+    ngx_str_t **args, ngx_str_t *handler, ngx_str_t *rv)
 {
-    SV                *sv;
-    int                n, status;
-    char              *line;
-    u_char            *err;
-    STRLEN             len, n_a;
-    ngx_uint_t         i;
-    ngx_connection_t  *c;
+    SV          *sv;
+    int          n, status;
+    char        *line;
+    STRLEN       len, n_a;
+    ngx_str_t    err;
+    ngx_uint_t   i;
 
     dSP;
 
@@ -695,16 +647,16 @@ ngx_http_perl_call_handler(pTHX_ ngx_http_request_t *r, HV *nginx, SV *sub,
     XPUSHs(sv);
 
     if (args) {
-        EXTEND(sp, (intptr_t) args[0]);
+        for (i = 0; args[i]; i++) { /* void */ }
 
-        for (i = 1; i <= (uintptr_t) args[0]; i++) {
-            PUSHs(sv_2mortal(args[i]));
+        EXTEND(sp, (int) i);
+
+        for (i = 0; args[i]; i++) {
+            PUSHs(sv_2mortal(newSVpvn((char *) args[i]->data, args[i]->len)));
         }
     }
 
     PUTBACK;
-
-    c = r->connection;
 
     n = call_sv(sub, G_EVAL);
 
@@ -714,14 +666,14 @@ ngx_http_perl_call_handler(pTHX_ ngx_http_request_t *r, HV *nginx, SV *sub,
         if (rv == NULL) {
             status = POPi;
 
-            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, c->log, 0,
+            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                            "call_sv: %d", status);
 
         } else {
             line = SvPVx(POPs, n_a);
             rv->len = n_a;
 
-            rv->data = ngx_pnalloc(r->pool, n_a);
+            rv->data = ngx_palloc(r->pool, n_a);
             if (rv->data == NULL) {
                 return NGX_ERROR;
             }
@@ -739,11 +691,15 @@ ngx_http_perl_call_handler(pTHX_ ngx_http_request_t *r, HV *nginx, SV *sub,
 
     if (SvTRUE(ERRSV)) {
 
-        err = (u_char *) SvPV(ERRSV, len);
-        while (--len && (err[len] == CR || err[len] == LF)) { /* void */ }
+        err.data = (u_char *) SvPV(ERRSV, len);
+        for (len--; err.data[len] == LF || err.data[len] == CR; len--) {
+            /* void */
+        }
+        err.len = len + 1;
 
-        ngx_log_error(NGX_LOG_ERR, c->log, 0,
-                      "call_sv(\"%V\") failed: \"%*s\"", handler, len + 1, err);
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                      "call_sv(\"%V\") failed: \"%V\"",
+                      handler, &err);
 
         if (rv) {
             return NGX_ERROR;
@@ -753,7 +709,7 @@ ngx_http_perl_call_handler(pTHX_ ngx_http_request_t *r, HV *nginx, SV *sub,
     }
 
     if (n != 1) {
-        ngx_log_error(NGX_LOG_ALERT, c->log, 0,
+        ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0,
                       "call_sv(\"%V\") returned %d results", handler, n);
         status = NGX_OK;
     }
@@ -777,10 +733,7 @@ ngx_http_perl_eval_anon_sub(pTHX_ ngx_str_t *handler, SV **sv)
         }
     }
 
-    if (ngx_strncmp(p, "sub ", 4) == 0
-        || ngx_strncmp(p, "sub{", 4) == 0
-        || ngx_strncmp(p, "use ", 4) == 0)
-    {
+    if (ngx_strncmp(p, "sub ", 4) == 0 || ngx_strncmp(p, "use ", 4) == 0) {
         *sv = eval_pv((char *) p, FALSE);
 
         /* eval_pv() does not set ERRSV on failure */
@@ -799,11 +752,14 @@ ngx_http_perl_create_main_conf(ngx_conf_t *cf)
 
     pmcf = ngx_pcalloc(cf->pool, sizeof(ngx_http_perl_main_conf_t));
     if (pmcf == NULL) {
-        return NULL;
+        return NGX_CONF_ERROR;
     }
 
-    pmcf->modules = NGX_CONF_UNSET_PTR;
-    pmcf->requires = NGX_CONF_UNSET_PTR;
+    if (ngx_array_init(&pmcf->requires, cf->pool, 1, sizeof(u_char *))
+        != NGX_OK)
+    {
+        return NULL;
+    }
 
     return pmcf;
 }
@@ -832,17 +788,10 @@ ngx_http_perl_cleanup_perl(void *data)
     PerlInterpreter  *perl = data;
 
     PERL_SET_CONTEXT(perl);
-    PERL_SET_INTERP(perl);
 
     (void) perl_destruct(perl);
 
     perl_free(perl);
-
-    if (ngx_perl_term) {
-        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, ngx_cycle->log, 0, "perl term");
-
-        PERL_SYS_TERM();
-    }
 }
 
 #endif
@@ -882,7 +831,7 @@ ngx_http_perl_create_loc_conf(ngx_conf_t *cf)
 
     plcf = ngx_pcalloc(cf->pool, sizeof(ngx_http_perl_loc_conf_t));
     if (plcf == NULL) {
-        return NULL;
+        return NGX_CONF_ERROR;
     }
 
     /*
@@ -905,6 +854,28 @@ ngx_http_perl_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
         conf->sub = prev->sub;
         conf->handler = prev->handler;
     }
+
+    return NGX_CONF_OK;
+}
+
+
+static char *
+ngx_http_perl_require(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+{
+    ngx_http_perl_main_conf_t *pmcf = conf;
+
+    u_char     **p;
+    ngx_str_t   *value;
+
+    value = cf->args->elts;
+
+    p = ngx_array_push(&pmcf->requires);
+
+    if (p == NULL) {
+        return NGX_CONF_ERROR;
+    }
+
+    *p = value[1].data;
 
     return NGX_CONF_OK;
 }
@@ -941,7 +912,6 @@ ngx_http_perl(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
     dTHXa(pmcf->perl);
     PERL_SET_CONTEXT(pmcf->perl);
-    PERL_SET_INTERP(pmcf->perl);
 
     ngx_http_perl_eval_anon_sub(aTHX_ &value[1], &plcf->sub);
 
@@ -1013,7 +983,6 @@ ngx_http_perl_set(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
     dTHXa(pmcf->perl);
     PERL_SET_CONTEXT(pmcf->perl);
-    PERL_SET_INTERP(pmcf->perl);
 
     ngx_http_perl_eval_anon_sub(aTHX_ &value[2], &pv->sub);
 
@@ -1043,43 +1012,22 @@ ngx_http_perl_init_worker(ngx_cycle_t *cycle)
 
     pmcf = ngx_http_cycle_get_module_main_conf(cycle, ngx_http_perl_module);
 
-    if (pmcf) {
-        dTHXa(pmcf->perl);
-        PERL_SET_CONTEXT(pmcf->perl);
-        PERL_SET_INTERP(pmcf->perl);
+    {
 
-        /* set worker's $$ */
+    dTHXa(pmcf->perl);
+    PERL_SET_CONTEXT(pmcf->perl);
 
-        sv_setiv(GvSV(gv_fetchpv("$", TRUE, SVt_PV)), (I32) ngx_pid);
+    /* set worker's $$ */
+
+    sv_setiv(GvSV(gv_fetchpv("$", TRUE, SVt_PV)), (I32) ngx_pid);
+
     }
 
     return NGX_OK;
 }
 
-
 static void
 ngx_http_perl_exit(ngx_cycle_t *cycle)
 {
-#if (NGX_HAVE_PERL_MULTIPLICITY)
-
-    /*
-     * the master exit hook is run before global pool cleanup,
-     * therefore just set flag here
-     */
-
-    ngx_perl_term = 1;
-
-#else
-
-    if (nginx_stash) {
-        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, cycle->log, 0, "perl term");
-
-        (void) perl_destruct(perl);
-
-        perl_free(perl);
-
-        PERL_SYS_TERM();
-    }
-
-#endif
+    PERL_SYS_TERM();
 }

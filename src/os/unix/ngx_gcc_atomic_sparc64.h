@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -15,7 +14,7 @@
  *         r0 = [r1];
  *     }
  *
- * so "r0 == r2" means that the operation was successful.
+ * so "r0 == r2" means that the operation was successfull.
  *
  *
  * The "r" means the general register.

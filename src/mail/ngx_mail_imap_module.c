@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -29,7 +28,6 @@ static ngx_conf_bitmask_t  ngx_mail_imap_auth_methods[] = {
     { ngx_string("plain"), NGX_MAIL_AUTH_PLAIN_ENABLED },
     { ngx_string("login"), NGX_MAIL_AUTH_LOGIN_ENABLED },
     { ngx_string("cram-md5"), NGX_MAIL_AUTH_CRAM_MD5_ENABLED },
-    { ngx_string("external"), NGX_MAIL_AUTH_EXTERNAL_ENABLED },
     { ngx_null_string, 0 }
 };
 
@@ -38,9 +36,7 @@ static ngx_str_t  ngx_mail_imap_auth_methods_names[] = {
     ngx_string("AUTH=PLAIN"),
     ngx_string("AUTH=LOGIN"),
     ngx_null_string,  /* APOP */
-    ngx_string("AUTH=CRAM-MD5"),
-    ngx_string("AUTH=EXTERNAL"),
-    ngx_null_string   /* NONE */
+    ngx_string("AUTH=CRAM-MD5")
 };
 
 
@@ -54,9 +50,7 @@ static ngx_mail_protocol_t  ngx_mail_imap_protocol = {
     ngx_mail_imap_parse_command,
     ngx_mail_imap_auth_state,
 
-    ngx_string("* BAD internal server error" CRLF),
-    ngx_string("* BYE SSL certificate error" CRLF),
-    ngx_string("* BYE No required SSL certificate" CRLF)
+    ngx_string("* BAD internal server error" CRLF)
 };
 
 
@@ -181,7 +175,7 @@ ngx_mail_imap_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
     }
 
     for (m = NGX_MAIL_AUTH_PLAIN_ENABLED, i = 0;
-         m <= NGX_MAIL_AUTH_EXTERNAL_ENABLED;
+         m <= NGX_MAIL_AUTH_CRAM_MD5_ENABLED;
          m <<= 1, i++)
     {
         if (m & conf->auth_methods) {
@@ -189,7 +183,7 @@ ngx_mail_imap_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
         }
     }
 
-    p = ngx_pnalloc(cf->pool, size);
+    p = ngx_palloc(cf->pool, size);
     if (p == NULL) {
         return NGX_CONF_ERROR;
     }
@@ -207,7 +201,7 @@ ngx_mail_imap_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
     auth = p;
 
     for (m = NGX_MAIL_AUTH_PLAIN_ENABLED, i = 0;
-         m <= NGX_MAIL_AUTH_EXTERNAL_ENABLED;
+         m <= NGX_MAIL_AUTH_CRAM_MD5_ENABLED;
          m <<= 1, i++)
     {
         if (m & conf->auth_methods) {
@@ -222,7 +216,7 @@ ngx_mail_imap_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
 
     size += sizeof(" STARTTLS") - 1;
 
-    p = ngx_pnalloc(cf->pool, size);
+    p = ngx_palloc(cf->pool, size);
     if (p == NULL) {
         return NGX_CONF_ERROR;
     }
@@ -239,7 +233,7 @@ ngx_mail_imap_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
     size = (auth - conf->capability.data) + sizeof(CRLF) - 1
             + sizeof(" STARTTLS LOGINDISABLED") - 1;
 
-    p = ngx_pnalloc(cf->pool, size);
+    p = ngx_palloc(cf->pool, size);
     if (p == NULL) {
         return NGX_CONF_ERROR;
     }

@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -16,7 +15,11 @@ ngx_hash_find(ngx_hash_t *hash, ngx_uint_t key, u_char *name, size_t len)
     ngx_hash_elt_t  *elt;
 
 #if 0
-    ngx_log_error(NGX_LOG_ALERT, ngx_cycle->log, 0, "hf:\"%*s\"", len, name);
+    ngx_str_t  line;
+
+    line.len = len;
+    line.data = name;
+    ngx_log_error(NGX_LOG_ALERT, ngx_cycle->log, 0, "hf:\"%V\"", &line);
 #endif
 
     elt = hash->buckets[key % hash->size];
@@ -56,7 +59,11 @@ ngx_hash_find_wc_head(ngx_hash_wildcard_t *hwc, u_char *name, size_t len)
     ngx_uint_t   i, n, key;
 
 #if 0
-    ngx_log_error(NGX_LOG_ALERT, ngx_cycle->log, 0, "wch:\"%*s\"", len, name);
+    ngx_str_t  line;
+
+    line.len = len;
+    line.data = name;
+    ngx_log_error(NGX_LOG_ALERT, ngx_cycle->log, 0, "wch:\"%V\"", &line);
 #endif
 
     n = len;
@@ -81,39 +88,29 @@ ngx_hash_find_wc_head(ngx_hash_wildcard_t *hwc, u_char *name, size_t len)
 
     value = ngx_hash_find(&hwc->hash, key, &name[n], len - n);
 
-#if 0
-    ngx_log_error(NGX_LOG_ALERT, ngx_cycle->log, 0, "value:\"%p\"", value);
-#endif
-
     if (value) {
 
         /*
          * the 2 low bits of value have the special meaning:
-         *     00 - value is data pointer for both "example.com"
-         *          and "*.example.com";
-         *     01 - value is data pointer for "*.example.com" only;
-         *     10 - value is pointer to wildcard hash allowing
-         *          both "example.com" and "*.example.com";
+         *     00 - value is data pointer,
+         *     01 - value is pointer to wildcard hash allowing
+         *          "*.example.com" only,
          *     11 - value is pointer to wildcard hash allowing
-         *          "*.example.com" only.
+         *          both "example.com" and "*.example.com".
          */
 
-        if ((uintptr_t) value & 2) {
-
-            if (n == 0) {
-
-                /* "example.com" */
-
-                if ((uintptr_t) value & 1) {
-                    return NULL;
-                }
-
-                hwc = (ngx_hash_wildcard_t *)
-                                          ((uintptr_t) value & (uintptr_t) ~3);
-                return hwc->value;
-            }
+        if ((uintptr_t) value & 1) {
 
             hwc = (ngx_hash_wildcard_t *) ((uintptr_t) value & (uintptr_t) ~3);
+
+            if (n == 0) {
+                if ((uintptr_t) value & 2) {
+                    return hwc->value;
+
+                } else {
+                    return NULL;
+                }
+            }
 
             value = ngx_hash_find_wc_head(hwc, name, n - 1);
 
@@ -122,18 +119,6 @@ ngx_hash_find_wc_head(ngx_hash_wildcard_t *hwc, u_char *name, size_t len)
             }
 
             return hwc->value;
-        }
-
-        if ((uintptr_t) value & 1) {
-
-            if (n == 0) {
-
-                /* "example.com" */
-
-                return NULL;
-            }
-
-            return (void *) ((uintptr_t) value & (uintptr_t) ~3);
         }
 
         return value;
@@ -150,7 +135,11 @@ ngx_hash_find_wc_tail(ngx_hash_wildcard_t *hwc, u_char *name, size_t len)
     ngx_uint_t   i, key;
 
 #if 0
-    ngx_log_error(NGX_LOG_ALERT, ngx_cycle->log, 0, "wct:\"%*s\"", len, name);
+    ngx_str_t  line;
+
+    line.len = len;
+    line.data = name;
+    ngx_log_error(NGX_LOG_ALERT, ngx_cycle->log, 0, "wct:\"%V\"", &line);
 #endif
 
     key = 0;
@@ -173,19 +162,15 @@ ngx_hash_find_wc_tail(ngx_hash_wildcard_t *hwc, u_char *name, size_t len)
 
     value = ngx_hash_find(&hwc->hash, key, name, i);
 
-#if 0
-    ngx_log_error(NGX_LOG_ALERT, ngx_cycle->log, 0, "value:\"%p\"", value);
-#endif
-
     if (value) {
 
         /*
          * the 2 low bits of value have the special meaning:
-         *     00 - value is data pointer;
-         *     11 - value is pointer to wildcard hash allowing "example.*".
+         *     00 - value is data pointer,
+         *     01 - value is pointer to wildcard hash allowing "example.*".
          */
 
-        if ((uintptr_t) value & 2) {
+        if ((uintptr_t) value & 1) {
 
             i++;
 
@@ -221,10 +206,6 @@ ngx_hash_find_combined(ngx_hash_combined_t *hash, ngx_uint_t key, u_char *name,
         }
     }
 
-    if (len == 0) {
-        return NULL;
-    }
-
     if (hash->wc_head && hash->wc_head->hash.buckets) {
         value = ngx_hash_find_wc_head(hash->wc_head, name, len);
 
@@ -246,7 +227,7 @@ ngx_hash_find_combined(ngx_hash_combined_t *hash, ngx_uint_t key, u_char *name,
 
 
 #define NGX_HASH_ELT_SIZE(name)                                               \
-    (sizeof(void *) + ngx_align((name)->key.len + 2, sizeof(void *)))
+    (sizeof(void *) + ngx_align((name)->key.len + 1, sizeof(void *)))
 
 ngx_int_t
 ngx_hash_init(ngx_hash_init_t *hinit, ngx_hash_key_t *names, ngx_uint_t nelts)
@@ -257,19 +238,19 @@ ngx_hash_init(ngx_hash_init_t *hinit, ngx_hash_key_t *names, ngx_uint_t nelts)
     ngx_uint_t       i, n, key, size, start, bucket_size;
     ngx_hash_elt_t  *elt, **buckets;
 
-    if (hinit->max_size == 0) {
-        ngx_log_error(NGX_LOG_EMERG, hinit->pool->log, 0,
-                      "could not build %s, you should "
-                      "increase %s_max_size: %i",
-                      hinit->name, hinit->name, hinit->max_size);
-        return NGX_ERROR;
-    }
-
     for (n = 0; n < nelts; n++) {
+        if (names[n].key.len >= 255) {
+            ngx_log_error(NGX_LOG_EMERG, hinit->pool->log, 0,
+                          "the \"%V\" value to hash is to long: %uz bytes, "
+                          "the maximum length can be 255 bytes only",
+                          &names[n].key, names[n].key.len);
+            return NGX_ERROR;
+        }
+
         if (hinit->bucket_size < NGX_HASH_ELT_SIZE(&names[n]) + sizeof(void *))
         {
             ngx_log_error(NGX_LOG_EMERG, hinit->pool->log, 0,
-                          "could not build %s, you should "
+                          "could not build the %s, you should "
                           "increase %s_bucket_size: %i",
                           hinit->name, hinit->name, hinit->bucket_size);
             return NGX_ERROR;
@@ -286,11 +267,11 @@ ngx_hash_init(ngx_hash_init_t *hinit, ngx_hash_key_t *names, ngx_uint_t nelts)
     start = nelts / (bucket_size / (2 * sizeof(void *)));
     start = start ? start : 1;
 
-    if (hinit->max_size > 10000 && nelts && hinit->max_size / nelts < 100) {
+    if (hinit->max_size > 10000 && hinit->max_size / nelts < 100) {
         start = hinit->max_size - 1000;
     }
 
-    for (size = start; size <= hinit->max_size; size++) {
+    for (size = start; size < hinit->max_size; size++) {
 
         ngx_memzero(test, size * sizeof(u_short));
 
@@ -320,14 +301,15 @@ ngx_hash_init(ngx_hash_init_t *hinit, ngx_hash_key_t *names, ngx_uint_t nelts)
         continue;
     }
 
-    size = hinit->max_size;
-
-    ngx_log_error(NGX_LOG_WARN, hinit->pool->log, 0,
-                  "could not build optimal %s, you should increase "
-                  "either %s_max_size: %i or %s_bucket_size: %i; "
-                  "ignoring %s_bucket_size",
+    ngx_log_error(NGX_LOG_EMERG, hinit->pool->log, 0,
+                  "could not build the %s, you should increase "
+                  "either %s_max_size: %i or %s_bucket_size: %i",
                   hinit->name, hinit->name, hinit->max_size,
-                  hinit->name, hinit->bucket_size, hinit->name);
+                  hinit->name, hinit->bucket_size);
+
+    ngx_free(test);
+
+    return NGX_ERROR;
 
 found:
 
@@ -390,6 +372,7 @@ found:
 
         buckets[i] = (ngx_hash_elt_t *) elts;
         elts += test[i];
+
     }
 
     for (i = 0; i < size; i++) {
@@ -405,9 +388,11 @@ found:
         elt = (ngx_hash_elt_t *) ((u_char *) buckets[key] + test[key]);
 
         elt->value = names[n].value;
-        elt->len = (u_short) names[n].key.len;
+        elt->len = (u_char) names[n].key.len;
 
-        ngx_strlow(elt->name, names[n].key.data, names[n].key.len);
+        for (i = 0; i < names[n].key.len; i++) {
+            elt->name[i] = ngx_tolower(names[n].key.data[i]);
+        }
 
         test[key] = (u_short) (test[key] + NGX_HASH_ELT_SIZE(&names[n]));
     }
@@ -533,7 +518,7 @@ ngx_hash_wildcard_init(ngx_hash_init_t *hinit, ngx_hash_key_t *names,
 
             next_name->key.len = names[n].key.len - len;
             next_name->key.data = names[n].key.data + len;
-            next_name->key_hash = 0;
+            next_name->key_hash= 0;
             next_name->value = names[n].value;
 
 #if 0
@@ -561,7 +546,7 @@ ngx_hash_wildcard_init(ngx_hash_init_t *hinit, ngx_hash_key_t *names,
 
             next_name->key.len = names[i].key.len - dot_len;
             next_name->key.data = names[i].key.data + dot_len;
-            next_name->key_hash = 0;
+            next_name->key_hash= 0;
             next_name->value = names[i].value;
 
 #if 0
@@ -586,12 +571,13 @@ ngx_hash_wildcard_init(ngx_hash_init_t *hinit, ngx_hash_key_t *names,
 
             if (names[n].key.len == len) {
                 wdc->value = names[n].value;
+#if 0
+                ngx_log_error(NGX_LOG_ALERT, hinit->pool->log, 0,
+                              "wdc: \"%V\"", wdc->value);
+#endif
             }
 
-            name->value = (void *) ((uintptr_t) wdc | (dot ? 3 : 2));
-
-        } else if (dot) {
-            name->value = (void *) ((uintptr_t) name->value | 1);
+            name->value = (void *) ((uintptr_t) wdc | (dot ? 1 : 3));
         }
     }
 
@@ -630,24 +616,6 @@ ngx_hash_key_lc(u_char *data, size_t len)
 
     for (i = 0; i < len; i++) {
         key = ngx_hash(key, ngx_tolower(data[i]));
-    }
-
-    return key;
-}
-
-
-ngx_uint_t
-ngx_hash_strlow(u_char *dst, u_char *src, size_t n)
-{
-    ngx_uint_t  key;
-
-    key = 0;
-
-    while (n--) {
-        *dst = ngx_tolower(*src);
-        key = ngx_hash(key, *dst);
-        dst++;
-        src++;
     }
 
     return key;
@@ -742,10 +710,6 @@ ngx_hash_add_key(ngx_hash_keys_arrays_t *ha, ngx_str_t *key, void *value,
             if (key->data[i] == '.' && key->data[i + 1] == '.') {
                 return NGX_DECLINED;
             }
-
-            if (key->data[i] == '\0') {
-                return NGX_DECLINED;
-            }
         }
 
         if (key->len > 1 && key->data[0] == '.') {
@@ -832,7 +796,12 @@ wildcard:
 
     /* wildcard hash */
 
-    k = ngx_hash_strlow(&key->data[skip], &key->data[skip], last - skip);
+    k = 0;
+
+    for (i = skip; i < last; i++) {
+        key->data[i] = ngx_tolower(key->data[i]);
+        k = ngx_hash(k, key->data[i]);
+    }
 
     k %= ha->hsize;
 
@@ -870,7 +839,7 @@ wildcard:
         }
 
         name->len = last - 1;
-        name->data = ngx_pnalloc(ha->temp_pool, name->len);
+        name->data = ngx_palloc(ha->temp_pool, name->len);
         if (name->data == NULL) {
             return NGX_ERROR;
         }
@@ -886,7 +855,7 @@ wildcard:
          *      and ".example.com" to "com.example\0"
          */
 
-        p = ngx_pnalloc(ha->temp_pool, last);
+        p = ngx_palloc(ha->temp_pool, last);
         if (p == NULL) {
             return NGX_ERROR;
         }
@@ -922,7 +891,7 @@ wildcard:
 
         last++;
 
-        p = ngx_pnalloc(ha->temp_pool, last);
+        p = ngx_palloc(ha->temp_pool, last);
         if (p == NULL) {
             return NGX_ERROR;
         }
@@ -932,6 +901,17 @@ wildcard:
         hwc = &ha->dns_wc_tail;
         keys = &ha->dns_wc_tail_hash[k];
     }
+
+
+    hk = ngx_array_push(hwc);
+    if (hk == NULL) {
+        return NGX_ERROR;
+    }
+
+    hk->key.len = last - 1;
+    hk->key.data = p;
+    hk->key_hash = 0;
+    hk->value = value;
 
 
     /* check conflicts in wildcard hash */
@@ -964,25 +944,12 @@ wildcard:
     }
 
     name->len = last - skip;
-    name->data = ngx_pnalloc(ha->temp_pool, name->len);
+    name->data = ngx_palloc(ha->temp_pool, name->len);
     if (name->data == NULL) {
         return NGX_ERROR;
     }
 
     ngx_memcpy(name->data, key->data + skip, name->len);
-
-
-    /* add to wildcard hash */
-
-    hk = ngx_array_push(hwc);
-    if (hk == NULL) {
-        return NGX_ERROR;
-    }
-
-    hk->key.len = last - 1;
-    hk->key.data = p;
-    hk->key_hash = 0;
-    hk->value = value;
 
     return NGX_OK;
 }

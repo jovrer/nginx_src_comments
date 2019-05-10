@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -34,23 +33,10 @@ ngx_write_channel(ngx_socket_t s, ngx_channel_t *ch, size_t size,
         msg.msg_control = (caddr_t) &cmsg;
         msg.msg_controllen = sizeof(cmsg);
 
-        ngx_memzero(&cmsg, sizeof(cmsg));
-
         cmsg.cm.cmsg_len = CMSG_LEN(sizeof(int));
         cmsg.cm.cmsg_level = SOL_SOCKET;
         cmsg.cm.cmsg_type = SCM_RIGHTS;
-
-        /*
-         * We have to use ngx_memcpy() instead of simple
-         *   *(int *) CMSG_DATA(&cmsg.cm) = ch->fd;
-         * because some gcc 4.4 with -O2/3/s optimization issues the warning:
-         *   dereferencing type-punned pointer will break strict-aliasing rules
-         *
-         * Fortunately, gcc with -O1 compiles this ngx_memcpy()
-         * in the same simple assignment as in the code above
-         */
-
-        ngx_memcpy(CMSG_DATA(&cmsg.cm), &ch->fd, sizeof(int));
+        *(int *) CMSG_DATA(&cmsg.cm) = ch->fd;
     }
 
     msg.msg_flags = 0;
@@ -144,7 +130,7 @@ ngx_read_channel(ngx_socket_t s, ngx_channel_t *ch, size_t size, ngx_log_t *log)
 
     if ((size_t) n < sizeof(ngx_channel_t)) {
         ngx_log_error(NGX_LOG_ALERT, log, 0,
-                      "recvmsg() returned not enough data: %z", n);
+                      "recvmsg() returned not enough data: %uz", n);
         return NGX_ERROR;
     }
 
@@ -167,9 +153,7 @@ ngx_read_channel(ngx_socket_t s, ngx_channel_t *ch, size_t size, ngx_log_t *log)
             return NGX_ERROR;
         }
 
-        /* ch->fd = *(int *) CMSG_DATA(&cmsg.cm); */
-
-        ngx_memcpy(&ch->fd, CMSG_DATA(&cmsg.cm), sizeof(int));
+        ch->fd = *(int *) CMSG_DATA(&cmsg.cm);
     }
 
     if (msg.msg_flags & (MSG_TRUNC|MSG_CTRUNC)) {
@@ -215,6 +199,13 @@ ngx_add_channel_event(ngx_cycle_t *cycle, ngx_fd_t fd, ngx_int_t event,
 
     rev->log = cycle->log;
     wev->log = cycle->log;
+
+#if (NGX_THREADS)
+    rev->lock = &c->lock;
+    wev->lock = &c->lock;
+    rev->own_lock = &c->lock;
+    wev->own_lock = &c->lock;
+#endif
 
     rev->channel = 1;
     wev->channel = 1;

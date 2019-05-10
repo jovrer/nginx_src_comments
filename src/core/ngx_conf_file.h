@@ -1,12 +1,11 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
-#ifndef _NGX_CONF_FILE_H_INCLUDED_
-#define _NGX_CONF_FILE_H_INCLUDED_
+#ifndef _NGX_HTTP_CONF_FILE_H_INCLUDED_
+#define _NGX_HTTP_CONF_FILE_H_INCLUDED_
 
 
 #include <ngx_config.h>
@@ -14,7 +13,7 @@
 
 
 /*
- *        AAAA  number of arguments
+ *        AAAA  number of agruments
  *      FF      command flags
  *    TT        command type, i.e. HTTP "location" or "server" command
  */
@@ -45,11 +44,12 @@
 #define NGX_CONF_ANY         0x00000400
 #define NGX_CONF_1MORE       0x00000800
 #define NGX_CONF_2MORE       0x00001000
+#define NGX_CONF_MULTI       0x00002000
 
 #define NGX_DIRECT_CONF      0x00010000
 
 #define NGX_MAIN_CONF        0x01000000
-#define NGX_ANY_CONF         0x1F000000
+#define NGX_ANY_CONF         0x0F000000
 
 
 
@@ -71,7 +71,7 @@
 #define NGX_CONF_MODULE      0x464E4F43  /* "CONF" */
 
 
-#define NGX_MAX_CONF_ERRSTR  1024
+#define NGX_MAX_CONF_ERRSTR  256
 
 
 struct ngx_command_s {
@@ -90,23 +90,72 @@ struct ngx_open_file_s {
     ngx_fd_t              fd;
     ngx_str_t             name;
 
-    void                (*flush)(ngx_open_file_t *file, ngx_log_t *log);
+    u_char               *buffer;
+    u_char               *pos;
+    u_char               *last;
+
+#if 0
+    /* e.g. append mode, error_log */
+    ngx_uint_t            flags;
+    /* e.g. reopen db file */
+    ngx_uint_t          (*handler)(void *data, ngx_open_file_t *file);
     void                 *data;
+#endif
 };
+
+
+#define NGX_MODULE_V1          0, 0, 0, 0, 0, 0, 1
+#define NGX_MODULE_V1_PADDING  0, 0, 0, 0, 0, 0, 0, 0
+
+struct ngx_module_s {
+    ngx_uint_t            ctx_index;
+    ngx_uint_t            index;
+
+    ngx_uint_t            spare0;
+    ngx_uint_t            spare1;
+    ngx_uint_t            spare2;
+    ngx_uint_t            spare3;
+
+    ngx_uint_t            version;
+
+    void                 *ctx;
+    ngx_command_t        *commands;
+    ngx_uint_t            type;
+
+    ngx_int_t           (*init_master)(ngx_log_t *log);
+
+    ngx_int_t           (*init_module)(ngx_cycle_t *cycle);
+
+    ngx_int_t           (*init_process)(ngx_cycle_t *cycle);
+    ngx_int_t           (*init_thread)(ngx_cycle_t *cycle);
+    void                (*exit_thread)(ngx_cycle_t *cycle);
+    void                (*exit_process)(ngx_cycle_t *cycle);
+
+    void                (*exit_master)(ngx_cycle_t *cycle);
+
+    uintptr_t             spare_hook0;
+    uintptr_t             spare_hook1;
+    uintptr_t             spare_hook2;
+    uintptr_t             spare_hook3;
+    uintptr_t             spare_hook4;
+    uintptr_t             spare_hook5;
+    uintptr_t             spare_hook6;
+    uintptr_t             spare_hook7;
+};
+
+
+typedef struct {
+    ngx_str_t             name;
+    void               *(*create_conf)(ngx_cycle_t *cycle);
+    char               *(*init_conf)(ngx_cycle_t *cycle, void *conf);
+} ngx_core_module_t;
 
 
 typedef struct {
     ngx_file_t            file;
     ngx_buf_t            *buffer;
-    ngx_buf_t            *dump;
     ngx_uint_t            line;
 } ngx_conf_file_t;
-
-
-typedef struct {
-    ngx_str_t             name;
-    ngx_buf_t            *buffer;
-} ngx_conf_dump_t;
 
 
 typedef char *(*ngx_conf_handler_pt)(ngx_conf_t *cf,
@@ -265,16 +314,16 @@ char *ngx_conf_check_num_bounds(ngx_conf_t *cf, void *post, void *data);
     }
 
 
-char *ngx_conf_param(ngx_conf_t *cf);
+#define addressof(addr)  ((int) &addr)
+
+
 char *ngx_conf_parse(ngx_conf_t *cf, ngx_str_t *filename);
-char *ngx_conf_include(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 
 
-ngx_int_t ngx_conf_full_name(ngx_cycle_t *cycle, ngx_str_t *name,
-    ngx_uint_t conf_prefix);
+ngx_int_t ngx_conf_full_name(ngx_cycle_t *cycle, ngx_str_t *name);
 ngx_open_file_t *ngx_conf_open_file(ngx_cycle_t *cycle, ngx_str_t *name);
 void ngx_cdecl ngx_conf_log_error(ngx_uint_t level, ngx_conf_t *cf,
-    ngx_err_t err, const char *fmt, ...);
+    ngx_err_t err, char *fmt, ...);
 
 
 char *ngx_conf_set_flag_slot(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
@@ -292,4 +341,8 @@ char *ngx_conf_set_enum_slot(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 char *ngx_conf_set_bitmask_slot(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 
 
-#endif /* _NGX_CONF_FILE_H_INCLUDED_ */
+extern ngx_uint_t     ngx_max_module;
+extern ngx_module_t  *ngx_modules[];
+
+
+#endif /* _NGX_HTTP_CONF_FILE_H_INCLUDED_ */

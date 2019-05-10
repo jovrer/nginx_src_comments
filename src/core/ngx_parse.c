@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -12,35 +11,33 @@
 ssize_t
 ngx_parse_size(ngx_str_t *line)
 {
-    u_char   unit;
-    size_t   len;
-    ssize_t  size, scale, max;
+    u_char     last;
+    size_t     len;
+    ssize_t    size;
+    ngx_int_t  scale;
 
     len = line->len;
-    unit = line->data[len - 1];
+    last = line->data[len - 1];
 
-    switch (unit) {
+    switch (last) {
     case 'K':
     case 'k':
         len--;
-        max = NGX_MAX_SIZE_T_VALUE / 1024;
         scale = 1024;
         break;
 
     case 'M':
     case 'm':
         len--;
-        max = NGX_MAX_SIZE_T_VALUE / (1024 * 1024);
         scale = 1024 * 1024;
         break;
 
     default:
-        max = NGX_MAX_SIZE_T_VALUE;
         scale = 1;
     }
 
     size = ngx_atosz(line->data, len);
-    if (size == NGX_ERROR || size > max) {
+    if (size == NGX_ERROR) {
         return NGX_ERROR;
     }
 
@@ -53,42 +50,39 @@ ngx_parse_size(ngx_str_t *line)
 off_t
 ngx_parse_offset(ngx_str_t *line)
 {
-    u_char  unit;
-    off_t   offset, scale, max;
-    size_t  len;
+    u_char     last;
+    off_t      offset;
+    size_t     len;
+    ngx_int_t  scale;
 
     len = line->len;
-    unit = line->data[len - 1];
+    last = line->data[len - 1];
 
-    switch (unit) {
+    switch (last) {
     case 'K':
     case 'k':
         len--;
-        max = NGX_MAX_OFF_T_VALUE / 1024;
         scale = 1024;
         break;
 
     case 'M':
     case 'm':
         len--;
-        max = NGX_MAX_OFF_T_VALUE / (1024 * 1024);
         scale = 1024 * 1024;
         break;
 
     case 'G':
     case 'g':
         len--;
-        max = NGX_MAX_OFF_T_VALUE / (1024 * 1024 * 1024);
         scale = 1024 * 1024 * 1024;
         break;
 
     default:
-        max = NGX_MAX_OFF_T_VALUE;
         scale = 1;
     }
 
     offset = ngx_atoof(line->data, len);
-    if (offset == NGX_ERROR || offset > max) {
+    if (offset == NGX_ERROR) {
         return NGX_ERROR;
     }
 
@@ -99,12 +93,12 @@ ngx_parse_offset(ngx_str_t *line)
 
 
 ngx_int_t
-ngx_parse_time(ngx_str_t *line, ngx_uint_t is_sec)
+ngx_parse_time(ngx_str_t *line, ngx_int_t sec)
 {
-    u_char      *p, *last;
+    size_t       len;
+    u_char      *start, last;
     ngx_int_t    value, total, scale;
-    ngx_int_t    max, cutoff, cutlim;
-    ngx_uint_t   valid;
+    ngx_uint_t   max, i;
     enum {
         st_start = 0,
         st_year,
@@ -118,156 +112,149 @@ ngx_parse_time(ngx_str_t *line, ngx_uint_t is_sec)
         st_last
     } step;
 
-    valid = 0;
-    value = 0;
+
+    start = line->data;
+    len = 0;
     total = 0;
-    cutoff = NGX_MAX_INT_T_VALUE / 10;
-    cutlim = NGX_MAX_INT_T_VALUE % 10;
-    step = is_sec ? st_start : st_month;
+    step = sec ? st_start : st_month;
 
-    p = line->data;
-    last = p + line->len;
+    for (i = 0; /* void */ ; i++) {
 
-    while (p < last) {
-
-        if (*p >= '0' && *p <= '9') {
-            if (value >= cutoff && (value > cutoff || *p - '0' > cutlim)) {
-                return NGX_ERROR;
+        if (i < line->len) {
+            if (line->data[i] != ' ') {
+                len++;
+                continue;
             }
 
-            value = value * 10 + (*p++ - '0');
-            valid = 1;
-            continue;
+            if (line->data[i] == ' ' && len == 0) {
+                start = &line->data[i + 1];
+                continue;
+            }
         }
 
-        switch (*p++) {
+        if (len == 0) {
+            break;
+        }
 
+        last = line->data[i - 1];
+
+        switch (last) {
         case 'y':
             if (step > st_start) {
                 return NGX_ERROR;
             }
             step = st_year;
-            max = NGX_MAX_INT_T_VALUE / (60 * 60 * 24 * 365);
+            len--;
+            max = 68;
             scale = 60 * 60 * 24 * 365;
             break;
 
         case 'M':
-            if (step >= st_month) {
+            if (step > st_year) {
                 return NGX_ERROR;
             }
             step = st_month;
-            max = NGX_MAX_INT_T_VALUE / (60 * 60 * 24 * 30);
+            len--;
+            max = 828;
             scale = 60 * 60 * 24 * 30;
             break;
 
         case 'w':
-            if (step >= st_week) {
+            if (step > st_month) {
                 return NGX_ERROR;
             }
             step = st_week;
-            max = NGX_MAX_INT_T_VALUE / (60 * 60 * 24 * 7);
+            len--;
+            max = 3550;
             scale = 60 * 60 * 24 * 7;
             break;
 
         case 'd':
-            if (step >= st_day) {
+            if (step > st_week) {
                 return NGX_ERROR;
             }
             step = st_day;
-            max = NGX_MAX_INT_T_VALUE / (60 * 60 * 24);
+            len--;
+            max = 24855;
             scale = 60 * 60 * 24;
             break;
 
         case 'h':
-            if (step >= st_hour) {
+            if (step > st_day) {
                 return NGX_ERROR;
             }
             step = st_hour;
-            max = NGX_MAX_INT_T_VALUE / (60 * 60);
+            len--;
+            max = 596523;
             scale = 60 * 60;
             break;
 
         case 'm':
-            if (p < last && *p == 's') {
-                if (is_sec || step >= st_msec) {
-                    return NGX_ERROR;
-                }
-                p++;
-                step = st_msec;
-                max = NGX_MAX_INT_T_VALUE;
-                scale = 1;
-                break;
-            }
-
-            if (step >= st_min) {
+            if (step > st_hour) {
                 return NGX_ERROR;
             }
             step = st_min;
-            max = NGX_MAX_INT_T_VALUE / 60;
+            len--;
+            max = 35791394;
             scale = 60;
             break;
 
         case 's':
-            if (step >= st_sec) {
-                return NGX_ERROR;
-            }
-            step = st_sec;
-            max = NGX_MAX_INT_T_VALUE;
-            scale = 1;
-            break;
+            len--;
 
-        case ' ':
-            if (step >= st_sec) {
+            if (line->data[i - 2] == 'm') {
+                if (sec || step > st_sec) {
+                    return NGX_ERROR;
+                }
+                step = st_msec;
+                len--;
+                max = 2147483647;
+                scale = 1;
+                break;
+            }
+
+            if (step > st_min) {
                 return NGX_ERROR;
             }
-            step = st_last;
-            max = NGX_MAX_INT_T_VALUE;
+
+            step = st_sec;
+            max = 2147483647;
             scale = 1;
             break;
 
         default:
+            step = st_last;
+            max = 2147483647;
+            scale = 1;
+        }
+
+        value = ngx_atoi(start, len);
+        if (value == NGX_ERROR) {
             return NGX_ERROR;
         }
 
-        if (step != st_msec && !is_sec) {
+        if (step != st_msec && !sec) {
             scale *= 1000;
             max /= 1000;
         }
 
-        if (value > max) {
-            return NGX_ERROR;
+        if ((u_int) value > max) {
+            return NGX_PARSE_LARGE_TIME;
         }
 
-        value *= scale;
+        total += value * scale;
 
-        if (total > NGX_MAX_INT_T_VALUE - value) {
-            return NGX_ERROR;
+        if ((u_int) total > 2147483647) {
+            return NGX_PARSE_LARGE_TIME;
         }
 
-        total += value;
-
-        value = 0;
-
-        while (p < last && *p == ' ') {
-            p++;
-        }
-    }
-
-    if (!valid) {
-        return NGX_ERROR;
-    }
-
-    if (!is_sec) {
-        if (value > NGX_MAX_INT_T_VALUE / 1000) {
-            return NGX_ERROR;
+        if (i >= line->len) {
+            break;
         }
 
-        value *= 1000;
+        len = 0;
+        start = &line->data[i + 1];
     }
 
-    if (total > NGX_MAX_INT_T_VALUE - value) {
-        return NGX_ERROR;
-    }
-
-    return total + value;
+    return total;
 }

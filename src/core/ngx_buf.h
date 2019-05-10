@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -52,6 +51,8 @@ struct ngx_buf_s {
     unsigned         last_shadow:1;
     unsigned         temp_file:1;
 
+    unsigned         zerocopy_busy:1;
+
     /* STUB */ int   num;
 };
 
@@ -68,40 +69,17 @@ typedef struct {
 } ngx_bufs_t;
 
 
-typedef struct ngx_output_chain_ctx_s  ngx_output_chain_ctx_t;
-
 typedef ngx_int_t (*ngx_output_chain_filter_pt)(void *ctx, ngx_chain_t *in);
 
-typedef void (*ngx_output_chain_aio_pt)(ngx_output_chain_ctx_t *ctx,
-    ngx_file_t *file);
-
-struct ngx_output_chain_ctx_s {
+typedef struct {
     ngx_buf_t                   *buf;
     ngx_chain_t                 *in;
     ngx_chain_t                 *free;
     ngx_chain_t                 *busy;
 
-    unsigned                     sendfile:1;
-    unsigned                     directio:1;
-    unsigned                     unaligned:1;
-    unsigned                     need_in_memory:1;
-    unsigned                     need_in_temp:1;
-    unsigned                     aio:1;
-
-#if (NGX_HAVE_FILE_AIO || NGX_COMPAT)
-    ngx_output_chain_aio_pt      aio_handler;
-#if (NGX_HAVE_AIO_SENDFILE || NGX_COMPAT)
-    ssize_t                    (*aio_preload)(ngx_buf_t *file);
-#endif
-#endif
-
-#if (NGX_THREADS || NGX_COMPAT)
-    ngx_int_t                  (*thread_handler)(ngx_thread_task_t *task,
-                                                 ngx_file_t *file);
-    ngx_thread_task_t           *thread_task;
-#endif
-
-    off_t                        alignment;
+    unsigned                     sendfile;
+    unsigned                     need_in_memory;
+    unsigned                     need_in_temp;
 
     ngx_pool_t                  *pool;
     ngx_int_t                    allocated;
@@ -110,7 +88,7 @@ struct ngx_output_chain_ctx_s {
 
     ngx_output_chain_filter_pt   output_filter;
     void                        *filter_ctx;
-};
+} ngx_output_chain_ctx_t;
 
 
 typedef struct {
@@ -160,11 +138,8 @@ ngx_int_t ngx_chain_writer(void *ctx, ngx_chain_t *in);
 ngx_int_t ngx_chain_add_copy(ngx_pool_t *pool, ngx_chain_t **chain,
     ngx_chain_t *in);
 ngx_chain_t *ngx_chain_get_free_buf(ngx_pool_t *p, ngx_chain_t **free);
-void ngx_chain_update_chains(ngx_pool_t *p, ngx_chain_t **free,
-    ngx_chain_t **busy, ngx_chain_t **out, ngx_buf_tag_t tag);
+void ngx_chain_update_chains(ngx_chain_t **free, ngx_chain_t **busy,
+    ngx_chain_t **out, ngx_buf_tag_t tag);
 
-off_t ngx_chain_coalesce_file(ngx_chain_t **in, off_t limit);
-
-ngx_chain_t *ngx_chain_update_sent(ngx_chain_t *in, off_t sent);
 
 #endif /* _NGX_BUF_H_INCLUDED_ */

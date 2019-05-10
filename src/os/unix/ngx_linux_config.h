@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -22,7 +21,6 @@
 #include <stddef.h>             /* offsetof() */
 #include <stdio.h>
 #include <stdlib.h>
-#include <ctype.h>
 #include <errno.h>
 #include <string.h>
 #include <signal.h>
@@ -30,7 +28,6 @@
 #include <grp.h>
 #include <dirent.h>
 #include <glob.h>
-#include <sys/vfs.h>            /* statfs() */
 
 #include <sys/uio.h>
 #include <sys/stat.h>
@@ -52,18 +49,12 @@
 #include <malloc.h>             /* memalign() */
 #include <limits.h>             /* IOV_MAX */
 #include <sys/ioctl.h>
+#include <sys/sysctl.h>
 #include <crypt.h>
 #include <sys/utsname.h>        /* uname() */
 
-#include <dlfcn.h>
-
 
 #include <ngx_auto_config.h>
-
-
-#if (NGX_HAVE_POSIX_SEM)
-#include <semaphore.h>
-#endif
 
 
 #if (NGX_HAVE_SYS_PRCTL_H)
@@ -89,22 +80,22 @@ extern ssize_t sendfile(int s, int fd, int32_t *offset, size_t size);
 #endif
 
 
-#if (NGX_HAVE_SYS_EVENTFD_H)
-#include <sys/eventfd.h>
-#endif
-#include <sys/syscall.h>
-#if (NGX_HAVE_FILE_AIO)
-#include <linux/aio_abi.h>
-typedef struct iocb  ngx_aiocb_t;
-#endif
-
-
 #define NGX_LISTEN_BACKLOG        511
+
+
+#if defined TCP_DEFER_ACCEPT && !defined NGX_HAVE_DEFERRED_ACCEPT
+#define NGX_HAVE_DEFERRED_ACCEPT  1
+#endif
 
 
 #ifndef NGX_HAVE_SO_SNDLOWAT
 /* setsockopt(SO_SNDLOWAT) returns ENOPROTOOPT */
 #define NGX_HAVE_SO_SNDLOWAT         0
+#endif
+
+
+#ifndef NGX_HAVE_GNU_CRYPT_R
+#define NGX_HAVE_GNU_CRYPT_R         1
 #endif
 
 
@@ -114,7 +105,6 @@ typedef struct iocb  ngx_aiocb_t;
 
 
 #define NGX_HAVE_OS_SPECIFIC_INIT    1
-#define ngx_debug_init()
 
 
 extern char **environ;

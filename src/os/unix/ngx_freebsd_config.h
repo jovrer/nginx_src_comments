@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -16,7 +15,6 @@
 #include <stddef.h>             /* offsetof() */
 #include <stdio.h>
 #include <stdlib.h>
-#include <ctype.h>
 #include <errno.h>
 #include <string.h>
 #include <signal.h>
@@ -24,9 +22,6 @@
 #include <grp.h>
 #include <dirent.h>
 #include <glob.h>
-#include <time.h>
-#include <sys/param.h>          /* ALIGN() */
-#include <sys/mount.h>          /* statfs() */
 
 #include <sys/filio.h>          /* FIONBIO */
 #include <sys/uio.h>
@@ -48,8 +43,7 @@
 #include <libutil.h>            /* setproctitle() before 4.1 */
 #include <osreldate.h>
 #include <sys/sysctl.h>
-
-#include <dlfcn.h>
+#include <sys/param.h>          /* ALIGN() */
 
 
 #if __FreeBSD_version < 400017
@@ -73,13 +67,13 @@
 #include <ngx_auto_config.h>
 
 
-#if (NGX_HAVE_POSIX_SEM)
-#include <semaphore.h>
+#if (NGX_HAVE_POLL)
+#include <poll.h>
 #endif
 
 
-#if (NGX_HAVE_POLL)
-#include <poll.h>
+#if (NGX_HAVE_AIO)
+#include <aio.h>
 #endif
 
 
@@ -88,19 +82,19 @@
 #endif
 
 
-#if (NGX_HAVE_FILE_AIO)
-#include <aio.h>
-typedef struct aiocb  ngx_aiocb_t;
-#endif
-
-
 #define NGX_LISTEN_BACKLOG        -1
 
 
-#ifdef __DragonFly__
-#define NGX_KEEPALIVE_FACTOR      1000
+#if (defined SO_ACCEPTFILTER && !defined NGX_HAVE_DEFERRED_ACCEPT)
+#define NGX_HAVE_DEFERRED_ACCEPT  1
 #endif
 
+
+#if (__FreeBSD_version < 430000 || __FreeBSD_version < 500012)
+
+pid_t rfork_thread(int flags, void *stack, int (*func)(void *arg), void *arg);
+
+#endif
 
 #ifndef IOV_MAX
 #define IOV_MAX   1024
@@ -113,7 +107,6 @@ typedef struct aiocb  ngx_aiocb_t;
 
 
 #define NGX_HAVE_OS_SPECIFIC_INIT    1
-#define NGX_HAVE_DEBUG_MALLOC        1
 
 
 extern char **environ;

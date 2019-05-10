@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -73,7 +72,7 @@ void
 ngx_cpuinfo(void)
 {
     u_char    *vendor;
-    uint32_t   vbuf[5], cpu[4], model;
+    uint32_t   vbuf[5], cpu[4];
 
     vbuf[0] = 0;
     vbuf[1] = 0;
@@ -93,24 +92,13 @@ ngx_cpuinfo(void)
 
     if (ngx_strcmp(vendor, "GenuineIntel") == 0) {
 
-        switch ((cpu[0] & 0xf00) >> 8) {
+        switch (cpu[0] & 0xf00) {
 
         /* Pentium */
         case 5:
-            ngx_cacheline_size = 32;
-            break;
-
         /* Pentium Pro, II, III */
         case 6:
             ngx_cacheline_size = 32;
-
-            model = ((cpu[0] & 0xf0000) >> 8) | (cpu[0] & 0xf0);
-
-            if (model >= 0xd0) {
-                /* Intel Core, Core 2, Atom */
-                ngx_cacheline_size = 64;
-            }
-
             break;
 
         /*

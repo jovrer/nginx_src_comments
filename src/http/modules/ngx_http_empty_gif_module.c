@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 #include <ngx_config.h>
@@ -106,25 +105,58 @@ ngx_module_t  ngx_http_empty_gif_module = {
 };
 
 
-static ngx_str_t  ngx_http_gif_type = ngx_string("image/gif");
-
-
 static ngx_int_t
 ngx_http_empty_gif_handler(ngx_http_request_t *r)
 {
-    ngx_http_complex_value_t  cv;
+    ngx_int_t     rc;
+    ngx_buf_t    *b;
+    ngx_chain_t   out;
 
     if (!(r->method & (NGX_HTTP_GET|NGX_HTTP_HEAD))) {
         return NGX_HTTP_NOT_ALLOWED;
     }
 
-    ngx_memzero(&cv, sizeof(ngx_http_complex_value_t));
+    rc = ngx_http_discard_body(r);
 
-    cv.value.len = sizeof(ngx_empty_gif);
-    cv.value.data = ngx_empty_gif;
+    if (rc != NGX_OK && rc != NGX_AGAIN) {
+        return rc;
+    }
+
+    r->headers_out.content_type.len = sizeof("image/gif") - 1;
+    r->headers_out.content_type.data = (u_char *) "image/gif";
+
+    if (r->method == NGX_HTTP_HEAD) {
+        r->headers_out.status = NGX_HTTP_OK;
+        r->headers_out.content_length_n = sizeof(ngx_empty_gif);
+        r->headers_out.last_modified_time = 23349600;
+
+        return ngx_http_send_header(r);
+    }
+
+    b = ngx_pcalloc(r->pool, sizeof(ngx_buf_t));
+    if (b == NULL) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    out.buf = b;
+    out.next = NULL;
+
+    b->pos = ngx_empty_gif;
+    b->last = ngx_empty_gif + sizeof(ngx_empty_gif);
+    b->memory = 1;
+    b->last_buf = 1;
+
+    r->headers_out.status = NGX_HTTP_OK;
+    r->headers_out.content_length_n = sizeof(ngx_empty_gif);
     r->headers_out.last_modified_time = 23349600;
 
-    return ngx_http_send_response(r, NGX_HTTP_OK, &ngx_http_gif_type, &cv);
+    rc = ngx_http_send_header(r);
+
+    if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) {
+        return rc;
+    }
+
+    return ngx_http_output_filter(r, &out);
 }
 
 

@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -14,9 +13,7 @@
 
 /* Solaris declarations */
 
-#ifndef POLLREMOVE
 #define POLLREMOVE   0x0800
-#endif
 #define DP_POLL      0xD001
 #define DP_ISPOLLED  0xD002
 
@@ -90,7 +87,7 @@ ngx_event_module_t  ngx_devpoll_module_ctx = {
         ngx_devpoll_del_event,             /* disable an event */
         NULL,                              /* add an connection */
         NULL,                              /* delete an connection */
-        NULL,                              /* trigger a notify */
+        NULL,                              /* process the changes */
         ngx_devpoll_process_events,        /* process the events */
         ngx_devpoll_init,                  /* init the events */
         ngx_devpoll_done,                  /* done the events */
@@ -345,9 +342,8 @@ ngx_devpoll_process_events(ngx_cycle_t *cycle, ngx_msec_t timer,
     ngx_fd_t            fd;
     ngx_err_t           err;
     ngx_int_t           i;
-    ngx_uint_t          level, instance;
-    ngx_event_t        *rev, *wev;
-    ngx_queue_t        *queue;
+    ngx_uint_t          level;
+    ngx_event_t        *rev, *wev, **queue;
     ngx_connection_t   *c;
     struct pollfd       pfd;
     struct dvpoll       dvp;
@@ -373,10 +369,14 @@ ngx_devpoll_process_events(ngx_cycle_t *cycle, ngx_msec_t timer,
     dvp.dp_timeout = timer;
     events = ioctl(dp, DP_POLL, &dvp);
 
-    err = (events == -1) ? ngx_errno : 0;
+    if (events == -1) {
+        err = ngx_errno;
+    } else {
+        err = 0;
+    }
 
-    if (flags & NGX_UPDATE_TIME || ngx_event_timer_alarm) {
-        ngx_time_update();
+    if (flags & NGX_UPDATE_TIME) {
+        ngx_time_update(0, 0);
     }
 
     if (err) {
@@ -407,6 +407,8 @@ ngx_devpoll_process_events(ngx_cycle_t *cycle, ngx_msec_t timer,
         return NGX_ERROR;
     }
 
+    ngx_mutex_lock(ngx_posted_events_mutex);
+
     for (i = 0; i < events; i++) {
 
         fd = event_list[i].fd;
@@ -426,7 +428,7 @@ ngx_devpoll_process_events(ngx_cycle_t *cycle, ngx_msec_t timer,
 
             case -1:
                 ngx_log_error(NGX_LOG_ALERT, cycle->log, ngx_errno,
-                    "ioctl(DP_ISPOLLED) failed for socket %d, event %04Xd",
+                    "ioctl(DP_ISPOLLED) failed for socket %d, event",
                     fd, revents);
                 break;
 
@@ -438,7 +440,7 @@ ngx_devpoll_process_events(ngx_cycle_t *cycle, ngx_msec_t timer,
 
             default:
                 ngx_log_error(NGX_LOG_ALERT, cycle->log, 0,
-                    "unexpected event %04Xd for closed and removed socket %d, "
+                    "unexpected event %04Xd for closed and removed socket %d, ",
                     "ioctl(DP_ISPOLLED) returned rc:%d, fd:%d, event %04Xd",
                     revents, fd, rc, pfd.fd, pfd.revents);
 
@@ -450,7 +452,7 @@ ngx_devpoll_process_events(ngx_cycle_t *cycle, ngx_msec_t timer,
                     != (ssize_t) sizeof(struct pollfd))
                 {
                     ngx_log_error(NGX_LOG_ALERT, cycle->log, ngx_errno,
-                                  "write(/dev/poll) for %d failed", fd);
+                                  "write(/dev/poll) for %d failed, fd");
                 }
 
                 if (close(fd) == -1) {
@@ -481,11 +483,13 @@ ngx_devpoll_process_events(ngx_cycle_t *cycle, ngx_msec_t timer,
                           fd, event_list[i].events, revents);
         }
 
-        if (revents & (POLLERR|POLLHUP|POLLNVAL)) {
-
+        if ((revents & (POLLERR|POLLHUP|POLLNVAL))
+             && (revents & (POLLIN|POLLOUT)) == 0)
+        {
             /*
-             * if the error events were returned, add POLLIN and POLLOUT
-             * to handle the events at least in one active handler
+             * if the error events were returned without POLLIN or POLLOUT,
+             * then add these flags to handle the events at least in one
+             * active handler
              */
 
             revents |= POLLIN|POLLOUT;
@@ -494,38 +498,46 @@ ngx_devpoll_process_events(ngx_cycle_t *cycle, ngx_msec_t timer,
         rev = c->read;
 
         if ((revents & POLLIN) && rev->active) {
-            rev->ready = 1;
 
-            if (flags & NGX_POST_EVENTS) {
-                queue = rev->accept ? &ngx_posted_accept_events
-                                    : &ngx_posted_events;
-
-                ngx_post_event(rev, queue);
+            if ((flags & NGX_POST_THREAD_EVENTS) && !rev->accept) {
+                rev->posted_ready = 1;
 
             } else {
-                instance = rev->instance;
+                rev->ready = 1;
+            }
 
+            if (flags & NGX_POST_EVENTS) {
+                queue = (ngx_event_t **) (rev->accept ?
+                               &ngx_posted_accept_events : &ngx_posted_events);
+
+                ngx_locked_post_event(rev, queue);
+
+            } else {
                 rev->handler(rev);
-
-                if (c->fd == -1 || rev->instance != instance) {
-                    continue;
-                }
             }
         }
 
         wev = c->write;
 
         if ((revents & POLLOUT) && wev->active) {
-            wev->ready = 1;
+
+            if (flags & NGX_POST_THREAD_EVENTS) {
+                wev->posted_ready = 1;
+
+            } else {
+                wev->ready = 1;
+            }
 
             if (flags & NGX_POST_EVENTS) {
-                ngx_post_event(wev, &ngx_posted_events);
+                ngx_locked_post_event(wev, &ngx_posted_events);
 
             } else {
                 wev->handler(wev);
             }
         }
     }
+
+    ngx_mutex_unlock(ngx_posted_events_mutex);
 
     return NGX_OK;
 }
@@ -538,7 +550,7 @@ ngx_devpoll_create_conf(ngx_cycle_t *cycle)
 
     dpcf = ngx_palloc(cycle->pool, sizeof(ngx_devpoll_conf_t));
     if (dpcf == NULL) {
-        return NULL;
+        return NGX_CONF_ERROR;
     }
 
     dpcf->changes = NGX_CONF_UNSET;

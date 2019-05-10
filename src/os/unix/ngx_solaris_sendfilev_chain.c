@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -29,13 +28,15 @@ static ssize_t sendfilev(int fd, const struct sendfilevec *vec,
     return -1;
 }
 
-ngx_chain_t *ngx_solaris_sendfilev_chain(ngx_connection_t *c, ngx_chain_t *in,
-    off_t limit);
-
 #endif
 
 
-#define NGX_SENDFILEVECS  NGX_IOVS_PREALLOCATE
+#if (IOV_MAX > 64)
+#define NGX_SENDFILEVECS  64
+#else
+#define NGX_SENDFILEVECS  IOV_MAX
+#endif
+
 
 
 ngx_chain_t *
@@ -46,11 +47,10 @@ ngx_solaris_sendfilev_chain(ngx_connection_t *c, ngx_chain_t *in, off_t limit)
     off_t           size, send, prev_send, aligned, fprev;
     size_t          sent;
     ssize_t         n;
-    ngx_int_t       eintr;
+    ngx_int_t       eintr, complete;
     ngx_err_t       err;
-    ngx_buf_t      *file;
-    ngx_uint_t      nsfv;
     sendfilevec_t  *sfv, sfvs[NGX_SENDFILEVECS];
+    ngx_array_t     vec;
     ngx_event_t    *wev;
     ngx_chain_t    *cl;
 
@@ -73,23 +73,28 @@ ngx_solaris_sendfilev_chain(ngx_connection_t *c, ngx_chain_t *in, off_t limit)
 
 
     send = 0;
+    complete = 0;
+
+    vec.elts = sfvs;
+    vec.size = sizeof(sendfilevec_t);
+    vec.nalloc = NGX_SENDFILEVECS;
+    vec.pool = c->pool;
 
     for ( ;; ) {
         fd = SFV_FD_SELF;
         prev = NULL;
         fprev = 0;
-        file = NULL;
         sfv = NULL;
         eintr = 0;
         sent = 0;
         prev_send = send;
 
-        nsfv = 0;
+        vec.nelts = 0;
 
         /* create the sendfilevec and coalesce the neighbouring bufs */
 
-        for (cl = in; cl && send < limit; cl = cl->next) {
-
+        for (cl = in; cl && vec.nelts < IOV_MAX && send < limit; cl = cl->next)
+        {
             if (ngx_buf_special(cl->buf)) {
                 continue;
             }
@@ -107,11 +112,10 @@ ngx_solaris_sendfilev_chain(ngx_connection_t *c, ngx_chain_t *in, off_t limit)
                     sfv->sfv_len += (size_t) size;
 
                 } else {
-                    if (nsfv == NGX_SENDFILEVECS) {
-                        break;
+                    sfv = ngx_array_push(&vec);
+                    if (sfv == NULL) {
+                        return NGX_CHAIN_ERROR;
                     }
-
-                    sfv = &sfvs[nsfv++];
 
                     sfv->sfv_fd = SFV_FD_SELF;
                     sfv->sfv_flag = 0;
@@ -142,11 +146,10 @@ ngx_solaris_sendfilev_chain(ngx_connection_t *c, ngx_chain_t *in, off_t limit)
                     sfv->sfv_len += (size_t) size;
 
                 } else {
-                    if (nsfv == NGX_SENDFILEVECS) {
-                        break;
+                    sfv = ngx_array_push(&vec);
+                    if (sfv == NULL) {
+                        return NGX_CHAIN_ERROR;
                     }
-
-                    sfv = &sfvs[nsfv++];
 
                     fd = cl->buf->file->fd;
                     sfv->sfv_fd = fd;
@@ -155,74 +158,90 @@ ngx_solaris_sendfilev_chain(ngx_connection_t *c, ngx_chain_t *in, off_t limit)
                     sfv->sfv_len = (size_t) size;
                 }
 
-                file = cl->buf;
                 fprev = cl->buf->file_pos + size;
                 send += size;
             }
         }
 
-        n = sendfilev(c->fd, sfvs, nsfv, &sent);
+        n = sendfilev(c->fd, vec.elts, vec.nelts, &sent);
 
         if (n == -1) {
             err = ngx_errno;
 
-            switch (err) {
-            case NGX_EAGAIN:
-                break;
+            if (err == NGX_EAGAIN || err == NGX_EINTR) {
+                if (err == NGX_EINTR) {
+                    eintr = 1;
+                }
 
-            case NGX_EINTR:
-                eintr = 1;
-                break;
+                ngx_log_debug1(NGX_LOG_DEBUG_EVENT, c->log, err,
+                              "sendfilev() sent only %uz bytes", sent);
 
-            default:
+            } else {
                 wev->error = 1;
                 ngx_connection_error(c, err, "sendfilev() failed");
                 return NGX_CHAIN_ERROR;
             }
-
-            ngx_log_debug1(NGX_LOG_DEBUG_EVENT, c->log, err,
-                          "sendfilev() sent only %uz bytes", sent);
-
-        } else if (n == 0 && sent == 0) {
-
-            /*
-             * sendfilev() is documented to return -1 with errno
-             * set to EINVAL if svf_len is greater than the file size,
-             * but at least Solaris 11 returns 0 instead
-             */
-
-            if (file) {
-                ngx_log_error(NGX_LOG_ALERT, c->log, 0,
-                        "sendfilev() reported that \"%s\" was truncated at %O",
-                        file->file->name.data, file->file_pos);
-
-            } else {
-                ngx_log_error(NGX_LOG_ALERT, c->log, 0,
-                              "sendfilev() returned 0 with memory buffers");
-            }
-
-            return NGX_CHAIN_ERROR;
         }
 
         ngx_log_debug2(NGX_LOG_DEBUG_EVENT, c->log, 0,
                        "sendfilev: %z %z", n, sent);
 
+        if (send - prev_send == (off_t) sent) {
+            complete = 1;
+        }
+
         c->sent += sent;
 
-        in = ngx_chain_update_sent(in, sent);
+        for (cl = in; cl; cl = cl->next) {
+
+            if (ngx_buf_special(cl->buf)) {
+                continue;
+            }
+
+            if (sent == 0) {
+                break;
+            }
+
+            size = ngx_buf_size(cl->buf);
+
+            if ((off_t) sent >= size) {
+                sent = (size_t) ((off_t) sent - size);
+
+                if (ngx_buf_in_memory(cl->buf)) {
+                    cl->buf->pos = cl->buf->last;
+                }
+
+                if (cl->buf->in_file) {
+                    cl->buf->file_pos = cl->buf->file_last;
+                }
+
+                continue;
+            }
+
+            if (ngx_buf_in_memory(cl->buf)) {
+                cl->buf->pos += sent;
+            }
+
+            if (cl->buf->in_file) {
+                cl->buf->file_pos += sent;
+            }
+
+            break;
+        }
 
         if (eintr) {
-            send = prev_send + sent;
             continue;
         }
 
-        if (send - prev_send != (off_t) sent) {
+        if (!complete) {
             wev->ready = 0;
-            return in;
+            return cl;
         }
 
-        if (send >= limit || in == NULL) {
-            return in;
+        if (send >= limit || cl == NULL) {
+            return cl;
         }
+
+        in = cl;
     }
 }

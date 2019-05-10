@@ -1,6 +1,5 @@
 
 # Copyright (C) Igor Sysoev
-# Copyright (C) Nginx, Inc.
 
 
 if [ $ZLIB != NONE ]; then
@@ -8,14 +7,12 @@ if [ $ZLIB != NONE ]; then
 
     case "$NGX_CC_NAME" in
 
-        msvc | owc | bcc)
-            have=NGX_ZLIB . auto/have
+        msvc* | owc* | bcc)
             LINK_DEPS="$LINK_DEPS $ZLIB/zlib.lib"
             CORE_LIBS="$CORE_LIBS $ZLIB/zlib.lib"
         ;;
 
-        icc)
-            have=NGX_ZLIB . auto/have
+        icc*)
             LINK_DEPS="$LINK_DEPS $ZLIB/libz.a"
 
             # to allow -ipo optimization we link with the *.o but not library
@@ -32,7 +29,6 @@ if [ $ZLIB != NONE ]; then
         ;;
 
         *)
-            have=NGX_ZLIB . auto/have
             LINK_DEPS="$LINK_DEPS $ZLIB/libz.a"
             CORE_LIBS="$CORE_LIBS $ZLIB/libz.a"
             #CORE_LIBS="$CORE_LIBS -L $ZLIB -lz"
@@ -48,7 +44,7 @@ else
         # FreeBSD, Solaris, Linux
 
         ngx_feature="zlib library"
-        ngx_feature_name="NGX_ZLIB"
+        ngx_feature_name=
         ngx_feature_run=no
         ngx_feature_incs="#include <zlib.h>"
         ngx_feature_path=
@@ -62,18 +58,6 @@ else
             ZLIB=YES
             ngx_found=no
         fi
-    fi
-
-    if [ $ZLIB != YES ]; then
-cat << END
-
-$0: error: the HTTP gzip module requires the zlib library.
-You can either disable the module by using --without-http_gzip_module
-option, or install the zlib library into the system, or build the zlib library
-statically from the source with nginx by using --with-zlib=<path> option.
-
-END
-        exit 1
     fi
 
 fi

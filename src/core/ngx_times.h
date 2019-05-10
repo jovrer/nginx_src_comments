@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -21,14 +20,10 @@ typedef struct {
 
 
 void ngx_time_init(void);
-void ngx_time_update(void);
-void ngx_time_sigsafe_update(void);
+void ngx_time_update(time_t sec, ngx_uint_t msec);
 u_char *ngx_http_time(u_char *buf, time_t t);
 u_char *ngx_http_cookie_time(u_char *buf, time_t t);
 void ngx_gmtime(time_t t, ngx_tm_t *tp);
-
-time_t ngx_next_time(time_t when);
-#define ngx_next_time_n      "mktime()"
 
 
 extern volatile ngx_time_t  *ngx_cached_time;
@@ -39,8 +34,6 @@ extern volatile ngx_time_t  *ngx_cached_time;
 extern volatile ngx_str_t    ngx_cached_err_log_time;
 extern volatile ngx_str_t    ngx_cached_http_time;
 extern volatile ngx_str_t    ngx_cached_http_log_time;
-extern volatile ngx_str_t    ngx_cached_http_log_iso8601;
-extern volatile ngx_str_t    ngx_cached_syslog_time;
 
 /*
  * milliseconds elapsed since epoch and truncated to ngx_msec_t,

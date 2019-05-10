@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -12,10 +11,9 @@
 
 
 typedef struct {
-    int     signo;
-    char   *signame;
-    char   *name;
-    void  (*handler)(int signo);
+     int     signo;
+     char   *signame;
+     void  (*handler)(int signo);
 } ngx_signal_t;
 
 
@@ -23,7 +21,6 @@ typedef struct {
 static void ngx_execute_proc(ngx_cycle_t *cycle, void *data);
 static void ngx_signal_handler(int signo);
 static void ngx_process_get_status(void);
-static void ngx_unlock_mutexes(ngx_pid_t pid);
 
 
 int              ngx_argc;
@@ -39,47 +36,39 @@ ngx_process_t    ngx_processes[NGX_MAX_PROCESSES];
 ngx_signal_t  signals[] = {
     { ngx_signal_value(NGX_RECONFIGURE_SIGNAL),
       "SIG" ngx_value(NGX_RECONFIGURE_SIGNAL),
-      "reload",
       ngx_signal_handler },
 
     { ngx_signal_value(NGX_REOPEN_SIGNAL),
       "SIG" ngx_value(NGX_REOPEN_SIGNAL),
-      "reopen",
       ngx_signal_handler },
 
     { ngx_signal_value(NGX_NOACCEPT_SIGNAL),
       "SIG" ngx_value(NGX_NOACCEPT_SIGNAL),
-      "",
       ngx_signal_handler },
 
     { ngx_signal_value(NGX_TERMINATE_SIGNAL),
       "SIG" ngx_value(NGX_TERMINATE_SIGNAL),
-      "stop",
       ngx_signal_handler },
 
     { ngx_signal_value(NGX_SHUTDOWN_SIGNAL),
       "SIG" ngx_value(NGX_SHUTDOWN_SIGNAL),
-      "quit",
       ngx_signal_handler },
 
     { ngx_signal_value(NGX_CHANGEBIN_SIGNAL),
       "SIG" ngx_value(NGX_CHANGEBIN_SIGNAL),
-      "",
       ngx_signal_handler },
 
-    { SIGALRM, "SIGALRM", "", ngx_signal_handler },
+    { SIGALRM, "SIGALRM", ngx_signal_handler },
 
-    { SIGINT, "SIGINT", "", ngx_signal_handler },
+    { SIGINT, "SIGINT", ngx_signal_handler },
 
-    { SIGIO, "SIGIO", "", ngx_signal_handler },
+    { SIGIO, "SIGIO", ngx_signal_handler },
 
-    { SIGCHLD, "SIGCHLD", "", ngx_signal_handler },
+    { SIGCHLD, "SIGCHLD", ngx_signal_handler },
 
-    { SIGSYS, "SIGSYS, SIG_IGN", "", SIG_IGN },
+    { SIGPIPE, "SIGPIPE, SIG_IGN", SIG_IGN },
 
-    { SIGPIPE, "SIGPIPE, SIG_IGN", "", SIG_IGN },
-
-    { 0, NULL, "", NULL }
+    { 0, NULL, NULL }
 };
 
 
@@ -218,33 +207,21 @@ ngx_spawn_process(ngx_cycle_t *cycle, ngx_spawn_proc_pt proc, void *data,
 
     switch (respawn) {
 
-    case NGX_PROCESS_NORESPAWN:
-        ngx_processes[s].respawn = 0;
-        ngx_processes[s].just_spawn = 0;
-        ngx_processes[s].detached = 0;
-        break;
-
-    case NGX_PROCESS_JUST_SPAWN:
-        ngx_processes[s].respawn = 0;
-        ngx_processes[s].just_spawn = 1;
-        ngx_processes[s].detached = 0;
-        break;
-
     case NGX_PROCESS_RESPAWN:
         ngx_processes[s].respawn = 1;
-        ngx_processes[s].just_spawn = 0;
+        ngx_processes[s].just_respawn = 0;
         ngx_processes[s].detached = 0;
         break;
 
     case NGX_PROCESS_JUST_RESPAWN:
         ngx_processes[s].respawn = 1;
-        ngx_processes[s].just_spawn = 1;
+        ngx_processes[s].just_respawn = 1;
         ngx_processes[s].detached = 0;
         break;
 
     case NGX_PROCESS_DETACHED:
         ngx_processes[s].respawn = 0;
-        ngx_processes[s].just_spawn = 0;
+        ngx_processes[s].just_respawn = 0;
         ngx_processes[s].detached = 1;
         break;
     }
@@ -291,14 +268,9 @@ ngx_init_signals(ngx_log_t *log)
         sa.sa_handler = sig->handler;
         sigemptyset(&sa.sa_mask);
         if (sigaction(sig->signo, &sa, NULL) == -1) {
-#if (NGX_VALGRIND)
-            ngx_log_error(NGX_LOG_ALERT, log, ngx_errno,
-                          "sigaction(%s) failed, ignored", sig->signame);
-#else
             ngx_log_error(NGX_LOG_EMERG, log, ngx_errno,
                           "sigaction(%s) failed", sig->signame);
             return NGX_ERROR;
-#endif
         }
     }
 
@@ -324,7 +296,7 @@ ngx_signal_handler(int signo)
         }
     }
 
-    ngx_time_sigsafe_update();
+    ngx_time_update(0, 0);
 
     action = "";
 
@@ -346,10 +318,8 @@ ngx_signal_handler(int signo)
             break;
 
         case ngx_signal_value(NGX_NOACCEPT_SIGNAL):
-            if (ngx_daemonized) {
-                ngx_noaccept = 1;
-                action = ", stop accepting connections";
-            }
+            ngx_noaccept = 1;
+            action = ", stop accepting connections";
             break;
 
         case ngx_signal_value(NGX_RECONFIGURE_SIGNAL):
@@ -382,7 +352,6 @@ ngx_signal_handler(int signo)
             break;
 
         case SIGALRM:
-            ngx_sigalrm = 1;
             break;
 
         case SIGIO:
@@ -397,13 +366,9 @@ ngx_signal_handler(int signo)
         break;
 
     case NGX_PROCESS_WORKER:
-    case NGX_PROCESS_HELPER:
         switch (signo) {
 
         case ngx_signal_value(NGX_NOACCEPT_SIGNAL):
-            if (!ngx_daemonized) {
-                break;
-            }
             ngx_debug_quit = 1;
         case ngx_signal_value(NGX_SHUTDOWN_SIGNAL):
             ngx_quit = 1;
@@ -479,24 +444,40 @@ ngx_process_get_status(void)
                 return;
             }
 
+#if (NGX_SOLARIS || NGX_FREEBSD)
+
             /*
              * Solaris always calls the signal handler for each exited process
              * despite waitpid() may be already called for this process.
              *
              * When several processes exit at the same time FreeBSD may
              * erroneously call the signal handler for exited process
-             * despite waitpid() may be already called for this process.
+             * despite waitpid() may be already called for this process
              */
 
             if (err == NGX_ECHILD) {
-                ngx_log_error(NGX_LOG_INFO, ngx_cycle->log, err,
+                ngx_log_error(NGX_LOG_INFO, ngx_cycle->log, errno,
                               "waitpid() failed");
                 return;
             }
 
-            ngx_log_error(NGX_LOG_ALERT, ngx_cycle->log, err,
+#endif
+
+            ngx_log_error(NGX_LOG_ALERT, ngx_cycle->log, errno,
                           "waitpid() failed");
+
             return;
+        }
+
+
+        if (ngx_accept_mutex_ptr) {
+
+            /*
+             * unlock the accept mutex if the abnormally exited process
+             * held it
+             */
+
+            ngx_atomic_cmp_set(ngx_accept_mutex_ptr, pid, 0);
         }
 
 
@@ -513,16 +494,10 @@ ngx_process_get_status(void)
         }
 
         if (WTERMSIG(status)) {
-#ifdef WCOREDUMP
             ngx_log_error(NGX_LOG_ALERT, ngx_cycle->log, 0,
                           "%s %P exited on signal %d%s",
                           process, pid, WTERMSIG(status),
                           WCOREDUMP(status) ? " (core dumped)" : "");
-#else
-            ngx_log_error(NGX_LOG_ALERT, ngx_cycle->log, 0,
-                          "%s %P exited on signal %d",
-                          process, pid, WTERMSIG(status));
-#endif
 
         } else {
             ngx_log_error(NGX_LOG_NOTICE, ngx_cycle->log, 0,
@@ -532,59 +507,9 @@ ngx_process_get_status(void)
 
         if (WEXITSTATUS(status) == 2 && ngx_processes[i].respawn) {
             ngx_log_error(NGX_LOG_ALERT, ngx_cycle->log, 0,
-                          "%s %P exited with fatal code %d "
-                          "and cannot be respawned",
-                          process, pid, WEXITSTATUS(status));
+                        "%s %P exited with fatal code %d and could not respawn",
+                        process, pid, WEXITSTATUS(status));
             ngx_processes[i].respawn = 0;
-        }
-
-        ngx_unlock_mutexes(pid);
-    }
-}
-
-
-static void
-ngx_unlock_mutexes(ngx_pid_t pid)
-{
-    ngx_uint_t        i;
-    ngx_shm_zone_t   *shm_zone;
-    ngx_list_part_t  *part;
-    ngx_slab_pool_t  *sp;
-
-    /*
-     * unlock the accept mutex if the abnormally exited process
-     * held it
-     */
-
-    if (ngx_accept_mutex_ptr) {
-        (void) ngx_shmtx_force_unlock(&ngx_accept_mutex, pid);
-    }
-
-    /*
-     * unlock shared memory mutexes if held by the abnormally exited
-     * process
-     */
-
-    part = (ngx_list_part_t *) &ngx_cycle->shared_memory.part;
-    shm_zone = part->elts;
-
-    for (i = 0; /* void */ ; i++) {
-
-        if (i >= part->nelts) {
-            if (part->next == NULL) {
-                break;
-            }
-            part = part->next;
-            shm_zone = part->elts;
-            i = 0;
-        }
-
-        sp = (ngx_slab_pool_t *) shm_zone[i].shm.addr;
-
-        if (ngx_shmtx_force_unlock(&sp->mutex, pid)) {
-            ngx_log_error(NGX_LOG_ALERT, ngx_cycle->log, 0,
-                          "shared memory zone \"%V\" was locked by %P",
-                          &shm_zone[i].shm.name, pid);
         }
     }
 }
@@ -607,24 +532,4 @@ ngx_debug_point(void)
     case NGX_DEBUG_POINTS_ABORT:
         ngx_abort();
     }
-}
-
-
-ngx_int_t
-ngx_os_signal_process(ngx_cycle_t *cycle, char *name, ngx_pid_t pid)
-{
-    ngx_signal_t  *sig;
-
-    for (sig = signals; sig->signo != 0; sig++) {
-        if (ngx_strcmp(name, sig->name) == 0) {
-            if (kill(pid, sig->signo) != -1) {
-                return 0;
-            }
-
-            ngx_log_error(NGX_LOG_ALERT, cycle->log, ngx_errno,
-                          "kill(%P, %d) failed", pid, sig->signo);
-        }
-    }
-
-    return 1;
 }

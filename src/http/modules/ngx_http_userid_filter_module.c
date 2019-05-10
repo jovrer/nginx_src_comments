@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -39,20 +38,18 @@ typedef struct {
     uint32_t    uid_got[4];
     uint32_t    uid_set[4];
     ngx_str_t   cookie;
-    ngx_uint_t  reset;
 } ngx_http_userid_ctx_t;
 
 
-static ngx_http_userid_ctx_t *ngx_http_userid_get_uid(ngx_http_request_t *r,
-    ngx_http_userid_conf_t *conf);
-static ngx_int_t ngx_http_userid_variable(ngx_http_request_t *r,
-    ngx_http_variable_value_t *v, ngx_str_t *name, uint32_t *uid);
-static ngx_int_t ngx_http_userid_set_uid(ngx_http_request_t *r,
+static void ngx_http_userid_get_uid(ngx_http_request_t *r,
     ngx_http_userid_ctx_t *ctx, ngx_http_userid_conf_t *conf);
-static ngx_int_t ngx_http_userid_create_uid(ngx_http_request_t *r,
+static ngx_int_t ngx_http_userid_set_uid(ngx_http_request_t *r,
     ngx_http_userid_ctx_t *ctx, ngx_http_userid_conf_t *conf);
 
 static ngx_int_t ngx_http_userid_add_variables(ngx_conf_t *cf);
+static ngx_int_t ngx_http_userid_variable(ngx_http_request_t *r,
+    ngx_http_variable_value_t *v, uintptr_t data);
+
 static ngx_int_t ngx_http_userid_init(ngx_conf_t *cf);
 static void *ngx_http_userid_create_conf(ngx_conf_t *cf);
 static char *ngx_http_userid_merge_conf(ngx_conf_t *cf, void *parent,
@@ -166,8 +163,8 @@ static ngx_http_module_t  ngx_http_userid_filter_module_ctx = {
     NULL,                                  /* create server configuration */
     NULL,                                  /* merge server configuration */
 
-    ngx_http_userid_create_conf,           /* create location configuration */
-    ngx_http_userid_merge_conf             /* merge location configuration */
+    ngx_http_userid_create_conf,           /* create location configration */
+    ngx_http_userid_merge_conf             /* merge location configration */
 };
 
 
@@ -187,15 +184,14 @@ ngx_module_t  ngx_http_userid_filter_module = {
 };
 
 
-static ngx_str_t   ngx_http_userid_got = ngx_string("uid_got");
-static ngx_str_t   ngx_http_userid_set = ngx_string("uid_set");
-static ngx_str_t   ngx_http_userid_reset = ngx_string("uid_reset");
-static ngx_uint_t  ngx_http_userid_reset_index;
+static ngx_str_t  ngx_http_userid_got = ngx_string("uid_got");
+static ngx_str_t  ngx_http_userid_set = ngx_string("uid_set");
 
 
 static ngx_int_t
 ngx_http_userid_filter(ngx_http_request_t *r)
 {
+    ngx_int_t                rc;
     ngx_http_userid_ctx_t   *ctx;
     ngx_http_userid_conf_t  *conf;
 
@@ -205,114 +201,60 @@ ngx_http_userid_filter(ngx_http_request_t *r)
 
     conf = ngx_http_get_module_loc_conf(r, ngx_http_userid_filter_module);
 
-    if (conf->enable < NGX_HTTP_USERID_V1) {
-        return ngx_http_next_header_filter(r);
-    }
-
-    ctx = ngx_http_userid_get_uid(r, conf);
-
-    if (ctx == NULL) {
-        return NGX_ERROR;
-    }
-
-    if (ngx_http_userid_set_uid(r, ctx, conf) == NGX_OK) {
-        return ngx_http_next_header_filter(r);
-    }
-
-    return NGX_ERROR;
-}
-
-
-static ngx_int_t
-ngx_http_userid_got_variable(ngx_http_request_t *r,
-    ngx_http_variable_value_t *v, uintptr_t data)
-{
-    ngx_http_userid_ctx_t   *ctx;
-    ngx_http_userid_conf_t  *conf;
-
-    conf = ngx_http_get_module_loc_conf(r->main, ngx_http_userid_filter_module);
-
     if (conf->enable == NGX_HTTP_USERID_OFF) {
-        v->not_found = 1;
-        return NGX_OK;
+        return ngx_http_next_header_filter(r);
     }
 
-    ctx = ngx_http_userid_get_uid(r->main, conf);
 
+    ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_userid_ctx_t));
     if (ctx == NULL) {
         return NGX_ERROR;
+    }
+
+    ngx_http_set_ctx(r, ctx, ngx_http_userid_filter_module);
+
+    ngx_http_userid_get_uid(r, ctx, conf);
+
+    if (conf->enable == NGX_HTTP_USERID_LOG) {
+        return ngx_http_next_header_filter(r);
     }
 
     if (ctx->uid_got[3] != 0) {
-        return ngx_http_userid_variable(r->main, v, &conf->name, ctx->uid_got);
-    }
+        if (conf->mark == '\0') {
+            return ngx_http_next_header_filter(r);
 
-    v->not_found = 1;
-
-    return NGX_OK;
-}
-
-
-static ngx_int_t
-ngx_http_userid_set_variable(ngx_http_request_t *r,
-    ngx_http_variable_value_t *v, uintptr_t data)
-{
-    ngx_http_userid_ctx_t   *ctx;
-    ngx_http_userid_conf_t  *conf;
-
-    conf = ngx_http_get_module_loc_conf(r->main, ngx_http_userid_filter_module);
-
-    if (conf->enable < NGX_HTTP_USERID_V1) {
-        v->not_found = 1;
-        return NGX_OK;
-    }
-
-    ctx = ngx_http_userid_get_uid(r->main, conf);
-
-    if (ctx == NULL) {
-        return NGX_ERROR;
-    }
-
-    if (ngx_http_userid_create_uid(r->main, ctx, conf) != NGX_OK) {
-        return NGX_ERROR;
-    }
-
-    if (ctx->uid_set[3] == 0) {
-        v->not_found = 1;
-        return NGX_OK;
-    }
-
-    return ngx_http_userid_variable(r->main, v, &conf->name, ctx->uid_set);
-}
-
-
-static ngx_http_userid_ctx_t *
-ngx_http_userid_get_uid(ngx_http_request_t *r, ngx_http_userid_conf_t *conf)
-{
-    ngx_int_t                n;
-    ngx_str_t                src, dst;
-    ngx_table_elt_t        **cookies;
-    ngx_http_userid_ctx_t   *ctx;
-
-    ctx = ngx_http_get_module_ctx(r, ngx_http_userid_filter_module);
-
-    if (ctx) {
-        return ctx;
-    }
-
-    if (ctx == NULL) {
-        ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_userid_ctx_t));
-        if (ctx == NULL) {
-            return NULL;
+        } else {
+            if (ctx->cookie.len > 23
+                && ctx->cookie.data[22] == conf->mark
+                && ctx->cookie.data[23] == '=')
+            {
+                return ngx_http_next_header_filter(r);
+            }
         }
-
-        ngx_http_set_ctx(r, ctx, ngx_http_userid_filter_module);
     }
+
+    rc = ngx_http_userid_set_uid(r, ctx, conf);
+
+    if (rc != NGX_OK) {
+        return rc;
+    }
+
+    return ngx_http_next_header_filter(r);
+}
+
+
+static void
+ngx_http_userid_get_uid(ngx_http_request_t *r, ngx_http_userid_ctx_t *ctx,
+    ngx_http_userid_conf_t *conf)
+{
+    ngx_int_t          n;
+    ngx_str_t          src, dst;
+    ngx_table_elt_t  **cookies;
 
     n = ngx_http_parse_multi_header_lines(&r->headers_in.cookies, &conf->name,
                                           &ctx->cookie);
     if (n == NGX_DECLINED) {
-        return ctx;
+        return;
     }
 
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
@@ -323,7 +265,7 @@ ngx_http_userid_get_uid(ngx_http_request_t *r, ngx_http_userid_conf_t *conf)
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "client sent too short userid cookie \"%V\"",
                       &cookies[n]->value);
-        return ctx;
+        return;
     }
 
     src = ctx->cookie;
@@ -344,15 +286,13 @@ ngx_http_userid_get_uid(ngx_http_request_t *r, ngx_http_userid_conf_t *conf)
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "client sent invalid userid cookie \"%V\"",
                       &cookies[n]->value);
-        return ctx;
+        return;
     }
 
     ngx_log_debug4(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "uid: %08XD%08XD%08XD%08XD",
                    ctx->uid_got[0], ctx->uid_got[1],
                    ctx->uid_got[2], ctx->uid_got[3]);
-
-    return ctx;
 }
 
 
@@ -360,17 +300,67 @@ static ngx_int_t
 ngx_http_userid_set_uid(ngx_http_request_t *r, ngx_http_userid_ctx_t *ctx,
     ngx_http_userid_conf_t *conf)
 {
-    u_char           *cookie, *p;
-    size_t            len;
-    ngx_str_t         src, dst;
-    ngx_table_elt_t  *set_cookie, *p3p;
+    u_char              *cookie, *p;
+    size_t               len;
+    socklen_t            slen;
+    struct sockaddr_in   sin;
+    ngx_str_t            src, dst;
+    ngx_table_elt_t     *set_cookie, *p3p;
 
-    if (ngx_http_userid_create_uid(r, ctx, conf) != NGX_OK) {
-        return NGX_ERROR;
-    }
+    /*
+     * TODO: in the threaded mode the sequencers should be in TLS and their
+     * ranges should be divided between threads
+     */
 
-    if (ctx->uid_set[3] == 0) {
-        return NGX_OK;
+    if (ctx->uid_got[3] == 0) {
+
+        if (conf->enable == NGX_HTTP_USERID_V1) {
+            if (conf->service == NGX_CONF_UNSET) {
+                ctx->uid_set[0] = 0;
+            } else {
+                ctx->uid_set[0] = conf->service;
+            }
+            ctx->uid_set[1] = ngx_time();
+            ctx->uid_set[2] = start_value;
+            ctx->uid_set[3] = sequencer_v1;
+            sequencer_v1 += 0x100;
+
+        } else {
+            if (conf->service == NGX_CONF_UNSET) {
+                if (r->in_addr == 0) {
+                    slen = sizeof(struct sockaddr_in);
+                    if (getsockname(r->connection->fd,
+                                    (struct sockaddr *) &sin, &slen)
+                        == -1)
+                    {
+                        ngx_connection_error(r->connection, ngx_socket_errno,
+                                             "getsockname() failed");
+                        return NGX_ERROR;
+                    }
+
+                    r->in_addr = sin.sin_addr.s_addr;
+                }
+
+                ctx->uid_set[0] = htonl(r->in_addr);
+
+            } else {
+                ctx->uid_set[0] = htonl(conf->service);
+            }
+
+            ctx->uid_set[1] = htonl(ngx_time());
+            ctx->uid_set[2] = htonl(start_value);
+            ctx->uid_set[3] = htonl(sequencer_v2);
+            sequencer_v2 += 0x100;
+            if (sequencer_v2 < 0x03030302) {
+                sequencer_v2 = 0x03030302;
+            }
+        }
+
+    } else {
+        ctx->uid_set[0] = ctx->uid_got[0];
+        ctx->uid_set[1] = ctx->uid_got[1];
+        ctx->uid_set[2] = ctx->uid_got[2];
+        ctx->uid_set[3] = ctx->uid_got[3];
     }
 
     len = conf->name.len + 1 + ngx_base64_encoded_length(16) + conf->path.len;
@@ -383,7 +373,7 @@ ngx_http_userid_set_uid(ngx_http_request_t *r, ngx_http_userid_ctx_t *ctx,
         len += conf->domain.len;
     }
 
-    cookie = ngx_pnalloc(r->pool, len);
+    cookie = ngx_palloc(r->pool, len);
     if (cookie == NULL) {
         return NGX_ERROR;
     }
@@ -391,7 +381,7 @@ ngx_http_userid_set_uid(ngx_http_request_t *r, ngx_http_userid_ctx_t *ctx,
     p = ngx_copy(cookie, conf->name.data, conf->name.len);
     *p++ = '=';
 
-    if (ctx->uid_got[3] == 0 || ctx->reset) {
+    if (ctx->uid_got[3] == 0) {
         src.len = 16;
         src.data = (u_char *) ctx->uid_set;
         dst.data = p;
@@ -428,7 +418,8 @@ ngx_http_userid_set_uid(ngx_http_request_t *r, ngx_http_userid_ctx_t *ctx,
     }
 
     set_cookie->hash = 1;
-    ngx_str_set(&set_cookie->key, "Set-Cookie");
+    set_cookie->key.len = sizeof("Set-Cookie") - 1;
+    set_cookie->key.data = (u_char *) "Set-Cookie";
     set_cookie->value.len = p - cookie;
     set_cookie->value.data = cookie;
 
@@ -445,7 +436,8 @@ ngx_http_userid_set_uid(ngx_http_request_t *r, ngx_http_userid_ctx_t *ctx,
     }
 
     p3p->hash = 1;
-    ngx_str_set(&p3p->key, "P3P");
+    p3p->key.len = sizeof("P3P") - 1;
+    p3p->key.data = (u_char *) "P3P";
     p3p->value = conf->p3p;
 
     return NGX_OK;
@@ -453,112 +445,25 @@ ngx_http_userid_set_uid(ngx_http_request_t *r, ngx_http_userid_ctx_t *ctx,
 
 
 static ngx_int_t
-ngx_http_userid_create_uid(ngx_http_request_t *r, ngx_http_userid_ctx_t *ctx,
-    ngx_http_userid_conf_t *conf)
+ngx_http_userid_add_variables(ngx_conf_t *cf)
 {
-    ngx_connection_t           *c;
-    struct sockaddr_in         *sin;
-    ngx_http_variable_value_t  *vv;
-#if (NGX_HAVE_INET6)
-    u_char                     *p;
-    struct sockaddr_in6        *sin6;
-#endif
+    ngx_http_variable_t  *var;
 
-    if (ctx->uid_set[3] != 0) {
-        return NGX_OK;
+    var = ngx_http_add_variable(cf, &ngx_http_userid_got, NGX_HTTP_VAR_NOHASH);
+    if (var == NULL) {
+        return NGX_ERROR;
     }
 
-    if (ctx->uid_got[3] != 0) {
+    var->get_handler = ngx_http_userid_variable;
+    var->data = offsetof(ngx_http_userid_ctx_t, uid_got);
 
-        vv = ngx_http_get_indexed_variable(r, ngx_http_userid_reset_index);
-
-        if (vv->len == 0 || (vv->len == 1 && vv->data[0] == '0')) {
-
-            if (conf->mark == '\0'
-                || (ctx->cookie.len > 23
-                    && ctx->cookie.data[22] == conf->mark
-                    && ctx->cookie.data[23] == '='))
-            {
-                return NGX_OK;
-            }
-
-            ctx->uid_set[0] = ctx->uid_got[0];
-            ctx->uid_set[1] = ctx->uid_got[1];
-            ctx->uid_set[2] = ctx->uid_got[2];
-            ctx->uid_set[3] = ctx->uid_got[3];
-
-            return NGX_OK;
-
-        } else {
-            ctx->reset = 1;
-
-            if (vv->len == 3 && ngx_strncmp(vv->data, "log", 3) == 0) {
-                ngx_log_error(NGX_LOG_NOTICE, r->connection->log, 0,
-                        "userid cookie \"%V=%08XD%08XD%08XD%08XD\" was reset",
-                        &conf->name, ctx->uid_got[0], ctx->uid_got[1],
-                        ctx->uid_got[2], ctx->uid_got[3]);
-            }
-        }
+    var = ngx_http_add_variable(cf, &ngx_http_userid_set, NGX_HTTP_VAR_NOHASH);
+    if (var == NULL) {
+        return NGX_ERROR;
     }
 
-    /*
-     * TODO: in the threaded mode the sequencers should be in TLS and their
-     * ranges should be divided between threads
-     */
-
-    if (conf->enable == NGX_HTTP_USERID_V1) {
-        if (conf->service == NGX_CONF_UNSET) {
-            ctx->uid_set[0] = 0;
-        } else {
-            ctx->uid_set[0] = conf->service;
-        }
-        ctx->uid_set[1] = (uint32_t) ngx_time();
-        ctx->uid_set[2] = start_value;
-        ctx->uid_set[3] = sequencer_v1;
-        sequencer_v1 += 0x100;
-
-    } else {
-        if (conf->service == NGX_CONF_UNSET) {
-
-            c = r->connection;
-
-            if (ngx_connection_local_sockaddr(c, NULL, 0) != NGX_OK) {
-                return NGX_ERROR;
-            }
-
-            switch (c->local_sockaddr->sa_family) {
-
-#if (NGX_HAVE_INET6)
-            case AF_INET6:
-                sin6 = (struct sockaddr_in6 *) c->local_sockaddr;
-
-                p = (u_char *) &ctx->uid_set[0];
-
-                *p++ = sin6->sin6_addr.s6_addr[12];
-                *p++ = sin6->sin6_addr.s6_addr[13];
-                *p++ = sin6->sin6_addr.s6_addr[14];
-                *p = sin6->sin6_addr.s6_addr[15];
-
-                break;
-#endif
-            default: /* AF_INET */
-                sin = (struct sockaddr_in *) c->local_sockaddr;
-                ctx->uid_set[0] = sin->sin_addr.s_addr;
-                break;
-            }
-
-        } else {
-            ctx->uid_set[0] = htonl(conf->service);
-        }
-
-        ctx->uid_set[1] = htonl((uint32_t) ngx_time());
-        ctx->uid_set[2] = htonl(start_value);
-        ctx->uid_set[3] = htonl(sequencer_v2);
-        sequencer_v2 += 0x100;
-        if (sequencer_v2 < 0x03030302) {
-            sequencer_v2 = 0x03030302;
-        }
-    }
+    var->get_handler = ngx_http_userid_variable;
+    var->data = offsetof(ngx_http_userid_ctx_t, uid_set);
 
     return NGX_OK;
 }
@@ -566,10 +471,25 @@ ngx_http_userid_create_uid(ngx_http_request_t *r, ngx_http_userid_ctx_t *ctx,
 
 static ngx_int_t
 ngx_http_userid_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v,
-    ngx_str_t *name, uint32_t *uid)
+    uintptr_t data)
 {
-    v->len = name->len + sizeof("=00001111222233334444555566667777") - 1;
-    v->data = ngx_pnalloc(r->pool, v->len);
+    uint32_t                *uid;
+    ngx_http_userid_ctx_t   *ctx;
+    ngx_http_userid_conf_t  *conf;
+
+    ctx = ngx_http_get_module_ctx(r, ngx_http_userid_filter_module);
+
+    uid = (uint32_t *) ((char *) ctx + data);
+
+    if (ctx == NULL || uid[3] == 0) {
+        v->not_found = 1;
+        return NGX_OK;
+    }
+
+    conf = ngx_http_get_module_loc_conf(r, ngx_http_userid_filter_module);
+
+    v->len = conf->name.len + sizeof("=00001111222233334444555566667777") - 1;
+    v->data = ngx_palloc(r->pool, v->len);
     if (v->data == NULL) {
         return NGX_ERROR;
     }
@@ -579,56 +499,7 @@ ngx_http_userid_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v,
     v->not_found = 0;
 
     ngx_sprintf(v->data, "%V=%08XD%08XD%08XD%08XD",
-                name, uid[0], uid[1], uid[2], uid[3]);
-
-    return NGX_OK;
-}
-
-
-static ngx_int_t
-ngx_http_userid_reset_variable(ngx_http_request_t *r,
-    ngx_http_variable_value_t *v, uintptr_t data)
-{
-    *v = ngx_http_variable_null_value;
-
-    return NGX_OK;
-}
-
-
-static ngx_int_t
-ngx_http_userid_add_variables(ngx_conf_t *cf)
-{
-    ngx_int_t             n;
-    ngx_http_variable_t  *var;
-
-    var = ngx_http_add_variable(cf, &ngx_http_userid_got, 0);
-    if (var == NULL) {
-        return NGX_ERROR;
-    }
-
-    var->get_handler = ngx_http_userid_got_variable;
-
-    var = ngx_http_add_variable(cf, &ngx_http_userid_set, 0);
-    if (var == NULL) {
-        return NGX_ERROR;
-    }
-
-    var->get_handler = ngx_http_userid_set_variable;
-
-    var = ngx_http_add_variable(cf, &ngx_http_userid_reset,
-                                NGX_HTTP_VAR_CHANGEABLE);
-    if (var == NULL) {
-        return NGX_ERROR;
-    }
-
-    var->get_handler = ngx_http_userid_reset_variable;
-
-    n = ngx_http_get_variable_index(cf, &ngx_http_userid_reset);
-    if (n == NGX_ERROR) {
-        return NGX_ERROR;
-    }
-
-    ngx_http_userid_reset_index = n;
+                &conf->name, uid[0], uid[1], uid[2], uid[3]);
 
     return NGX_OK;
 }
@@ -641,16 +512,20 @@ ngx_http_userid_create_conf(ngx_conf_t *cf)
 
     conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_userid_conf_t));
     if (conf == NULL) {
-        return NULL;
+        return NGX_CONF_ERROR;
     }
 
     /*
      * set by ngx_pcalloc():
      *
-     *     conf->name = { 0, NULL };
-     *     conf->domain = { 0, NULL };
-     *     conf->path = { 0, NULL };
-     *     conf->p3p = { 0, NULL };
+     *     conf->name.len = 0;
+     *     conf->name.date = NULL;
+     *     conf->domain.len = 0;
+     *     conf->domain.date = NULL;
+     *     conf->path.len = 0;
+     *     conf->path.date = NULL;
+     *     conf->p3p.len = 0;
+     *     conf->p3p.date = NULL;
      */
 
     conf->enable = NGX_CONF_UNSET_UINT;
@@ -709,11 +584,13 @@ ngx_http_userid_domain(ngx_conf_t *cf, void *post, void *data)
     u_char  *p, *new;
 
     if (ngx_strcmp(domain->data, "none") == 0) {
-        ngx_str_set(domain, "");
+        domain->len = 0;
+        domain->data = (u_char *) "";
+
         return NGX_CONF_OK;
     }
 
-    new = ngx_pnalloc(cf->pool, sizeof("; domain=") - 1 + domain->len);
+    new = ngx_palloc(cf->pool, sizeof("; domain=") - 1 + domain->len);
     if (new == NULL) {
         return NGX_CONF_ERROR;
     }
@@ -735,7 +612,7 @@ ngx_http_userid_path(ngx_conf_t *cf, void *post, void *data)
 
     u_char  *p, *new;
 
-    new = ngx_pnalloc(cf->pool, sizeof("; path=") - 1 + path->len);
+    new = ngx_palloc(cf->pool, sizeof("; path=") - 1 + path->len);
     if (new == NULL) {
         return NGX_CONF_ERROR;
     }
@@ -774,8 +651,12 @@ ngx_http_userid_expires(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     }
 
     ucf->expires = ngx_parse_time(&value[1], 1);
-    if (ucf->expires == (time_t) NGX_ERROR) {
+    if (ucf->expires == NGX_ERROR) {
         return "invalid value";
+    }
+
+    if (ucf->expires == NGX_PARSE_LARGE_TIME) {
+        return "value must be less than 68 years";
     }
 
     return NGX_CONF_OK;
@@ -788,7 +669,8 @@ ngx_http_userid_p3p(ngx_conf_t *cf, void *post, void *data)
     ngx_str_t  *p3p = data;
 
     if (ngx_strcmp(p3p->data, "none") == 0) {
-        ngx_str_set(p3p, "");
+        p3p->len = 0;
+        p3p->data = (u_char *) "";
     }
 
     return NGX_CONF_OK;
@@ -836,7 +718,8 @@ ngx_http_userid_init_worker(ngx_cycle_t *cycle)
     ngx_gettimeofday(&tp);
 
     /* use the most significant usec part that fits to 16 bits */
-    start_value = (((uint32_t) tp.tv_usec / 20) << 16) | ngx_pid;
+    start_value = ((tp.tv_usec / 20) << 16) | ngx_pid;
 
     return NGX_OK;
 }
+

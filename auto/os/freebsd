@@ -1,6 +1,5 @@
 
 # Copyright (C) Igor Sysoev
-# Copyright (C) Nginx, Inc.
 
 
 have=NGX_FREEBSD . auto/have_headers
@@ -44,23 +43,6 @@ if [ $osreldate -gt 300007 ]; then
     CORE_SRCS="$CORE_SRCS $FREEBSD_SENDFILE_SRCS"
 fi
 
-if [ $NGX_FILE_AIO = YES ]; then
-    if [ $osreldate -gt 502103 ]; then
-        echo " + sendfile()'s SF_NODISKIO found"
-
-        have=NGX_HAVE_AIO_SENDFILE . auto/have
-    fi
-fi
-
-# POSIX semaphores
-# http://www.freebsd.org/cgi/query-pr.cgi?pr=kern/127545
-
-if [ $osreldate -ge 701106 ]; then
-    echo " + POSIX semaphores should work"
-else
-    have=NGX_HAVE_POSIX_SEM . auto/nohave
-fi
-
 
 # kqueue
 
@@ -80,7 +62,7 @@ fi
 NGX_KQUEUE_CHECKED=YES
 
 
-# kqueue's NOTE_LOWAT
+# kqueue's NOTE_LAWAT
 
 if [ \( $version -lt 500000 -a $version -ge 430000 \) \
      -o $version -ge 500018 ]
@@ -99,9 +81,40 @@ then
 fi
 
 
-# cpuset_setaffinity()
+if [ $USE_THREADS = "rfork" ]; then
 
-if [ $version -ge 701000 ]; then
-    echo " + cpuset_setaffinity() found"
-    have=NGX_HAVE_CPUSET_SETAFFINITY . auto/have
+    echo " + using rfork()"
+
+#    # kqueue's EVFILT_SIGNAL is safe
+#
+#    if [ $version -gt 460101 ]; then
+#        echo " + kqueue's EVFILT_SIGNAL is safe"
+#        have=NGX_HAVE_SAFE_EVFILT_SIGNAL . auto/have
+#    else
+#        echo "$0: error: the kqueue's EVFILT_SIGNAL is unsafe on this"
+#        echo "FreeBSD version, so --with-threads=rfork could not be used"
+#        echo
+#
+#        exit 1
+#    fi
+fi
+
+
+if [ $EVENT_AIO = YES ]; then
+    if [ \( $version -lt 500000 -a $version -ge 430000 \) \
+         -o $version -ge 500014 ]
+    then
+        have=NGX_HAVE_AIO . auto/have
+        EVENT_MODULES="$EVENT_MODULES $AIO_MODULE"
+        CORE_SRCS="$CORE_SRCS $AIO_SRCS"
+    else
+
+cat << END
+
+$0: error: the kqueue does not support AIO on this FreeBSD version
+
+END
+
+        exit 1
+    fi
 fi

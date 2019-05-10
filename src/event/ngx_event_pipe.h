@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -30,9 +29,9 @@ struct ngx_event_pipe_s {
     ngx_chain_t       *in;
     ngx_chain_t      **last_in;
 
-    ngx_chain_t       *writing;
-
     ngx_chain_t       *out;
+    ngx_chain_t      **last_out;
+
     ngx_chain_t       *free;
     ngx_chain_t       *busy;
 
@@ -47,13 +46,6 @@ struct ngx_event_pipe_s {
     ngx_event_pipe_output_filter_pt   output_filter;
     void                             *output_ctx;
 
-#if (NGX_THREADS || NGX_COMPAT)
-    ngx_int_t                       (*thread_handler)(ngx_thread_task_t *task,
-                                                      ngx_file_t *file);
-    void                             *thread_ctx;
-    ngx_thread_task_t                *thread_task;
-#endif
-
     unsigned           read:1;
     unsigned           cacheable:1;
     unsigned           single_buf:1;
@@ -65,7 +57,6 @@ struct ngx_event_pipe_s {
     unsigned           downstream_done:1;
     unsigned           downstream_error:1;
     unsigned           cyclic_temp_file:1;
-    unsigned           aio:1;
 
     ngx_int_t          allocated;
     ngx_bufs_t         bufs;
@@ -74,7 +65,6 @@ struct ngx_event_pipe_s {
     ssize_t            busy_size;
 
     off_t              read_length;
-    off_t              length;
 
     off_t              max_temp_file_size;
     ssize_t            temp_file_write_size;
@@ -89,9 +79,6 @@ struct ngx_event_pipe_s {
     ngx_chain_t       *preread_bufs;
     size_t             preread_size;
     ngx_buf_t         *buf_to_file;
-
-    size_t             limit_rate;
-    time_t             start_sec;
 
     ngx_temp_file_t   *temp_file;
 

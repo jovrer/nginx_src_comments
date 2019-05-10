@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -319,10 +318,6 @@ ngx_http_browser(ngx_http_request_t *r, ngx_http_browser_conf_t *cf)
                 if (c == '.') {
                     version += ver * scale;
 
-                    ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                                   "version: \"%ui\" \"%ui\"",
-                                   modern[i].version, version);
-
                     if (version > modern[i].version) {
                         return NGX_HTTP_MODERN_BROWSER;
                     }
@@ -344,8 +339,6 @@ ngx_http_browser(ngx_http_request_t *r, ngx_http_browser_conf_t *cf)
             if (version >= modern[i].version) {
                 return NGX_HTTP_MODERN_BROWSER;
             }
-
-            return NGX_HTTP_ANCIENT_BROWSER;
         }
 
         if (!cf->modern_unlisted_browsers) {
@@ -424,7 +417,7 @@ ngx_http_browser_create_conf(ngx_conf_t *cf)
 
     conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_browser_conf_t));
     if (conf == NULL) {
-        return NULL;
+        return NGX_CONF_ERROR;
     }
 
     /*
@@ -458,11 +451,10 @@ ngx_http_browser_merge_conf(ngx_conf_t *cf, void *parent, void *child)
      * with a real skip value.  The zero value means Opera.
      */
 
-    if (conf->modern_browsers == NULL && conf->modern_unlisted_browsers == 0) {
+    if (conf->modern_browsers == NULL) {
         conf->modern_browsers = prev->modern_browsers;
-        conf->modern_unlisted_browsers = prev->modern_unlisted_browsers;
 
-    } else if (conf->modern_browsers != NULL) {
+    } else {
         browsers = conf->modern_browsers->elts;
 
         for (i = 0; i < conf->modern_browsers->nelts; i++) {
@@ -502,9 +494,8 @@ found:
         }
     }
 
-    if (conf->ancient_browsers == NULL && conf->netscape4 == 0) {
+    if (conf->ancient_browsers == NULL) {
         conf->ancient_browsers = prev->ancient_browsers;
-        conf->netscape4 = prev->netscape4;
     }
 
     if (conf->modern_browser_value == NULL) {

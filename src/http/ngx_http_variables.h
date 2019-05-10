@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -11,12 +10,13 @@
 
 #include <ngx_config.h>
 #include <ngx_core.h>
+#include <ngx_event.h>
 #include <ngx_http.h>
 
 
 typedef ngx_variable_value_t  ngx_http_variable_value_t;
 
-#define ngx_http_variable(v)     { sizeof(v) - 1, 1, 0, 0, 0, (u_char *) v }
+#define ngx_http_variable(v)     { sizeof(v) - 1, 1, 0, 0, (u_char *) v }
 
 typedef struct ngx_http_variable_s  ngx_http_variable_t;
 
@@ -51,54 +51,13 @@ ngx_http_variable_value_t *ngx_http_get_flushed_variable(ngx_http_request_t *r,
     ngx_uint_t index);
 
 ngx_http_variable_value_t *ngx_http_get_variable(ngx_http_request_t *r,
-    ngx_str_t *name, ngx_uint_t key);
+    ngx_str_t *name, ngx_uint_t key, ngx_uint_t nowarn);
 
 ngx_int_t ngx_http_variable_unknown_header(ngx_http_variable_value_t *v,
     ngx_str_t *var, ngx_list_part_t *part, size_t prefix);
 
 
-#if (NGX_PCRE)
-
-typedef struct {
-    ngx_uint_t                    capture;
-    ngx_int_t                     index;
-} ngx_http_regex_variable_t;
-
-
-typedef struct {
-    ngx_regex_t                  *regex;
-    ngx_uint_t                    ncaptures;
-    ngx_http_regex_variable_t    *variables;
-    ngx_uint_t                    nvariables;
-    ngx_str_t                     name;
-} ngx_http_regex_t;
-
-
-typedef struct {
-    ngx_http_regex_t             *regex;
-    void                         *value;
-} ngx_http_map_regex_t;
-
-
-ngx_http_regex_t *ngx_http_regex_compile(ngx_conf_t *cf,
-    ngx_regex_compile_t *rc);
-ngx_int_t ngx_http_regex_exec(ngx_http_request_t *r, ngx_http_regex_t *re,
-    ngx_str_t *s);
-
-#endif
-
-
-typedef struct {
-    ngx_hash_combined_t           hash;
-#if (NGX_PCRE)
-    ngx_http_map_regex_t         *regex;
-    ngx_uint_t                    nregex;
-#endif
-} ngx_http_map_t;
-
-
-void *ngx_http_map_find(ngx_http_request_t *r, ngx_http_map_t *map,
-    ngx_str_t *match);
+#define ngx_http_clear_variable(r, index) r->variables0[index].text.data = NULL;
 
 
 ngx_int_t ngx_http_variables_add_core_vars(ngx_conf_t *cf);

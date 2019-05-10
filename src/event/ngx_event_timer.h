@@ -1,7 +1,6 @@
 
 /*
  * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
  */
 
 
@@ -22,10 +21,14 @@
 ngx_int_t ngx_event_timer_init(ngx_log_t *log);
 ngx_msec_t ngx_event_find_timer(void);
 void ngx_event_expire_timers(void);
-void ngx_event_cancel_timers(void);
 
 
-extern ngx_rbtree_t  ngx_event_timer_rbtree;
+#if (NGX_THREADS)
+extern ngx_mutex_t  *ngx_event_timer_mutex;
+#endif
+
+
+extern ngx_thread_volatile ngx_rbtree_t  ngx_event_timer_rbtree;
 
 
 static ngx_inline void
@@ -35,7 +38,11 @@ ngx_event_del_timer(ngx_event_t *ev)
                    "event timer del: %d: %M",
                     ngx_event_ident(ev->data), ev->timer.key);
 
+    ngx_mutex_lock(ngx_event_timer_mutex);
+
     ngx_rbtree_delete(&ngx_event_timer_rbtree, &ev->timer);
+
+    ngx_mutex_unlock(ngx_event_timer_mutex);
 
 #if (NGX_DEBUG)
     ev->timer.left = NULL;
@@ -58,9 +65,9 @@ ngx_event_add_timer(ngx_event_t *ev, ngx_msec_t timer)
     if (ev->timer_set) {
 
         /*
-         * Use a previous timer value if difference between it and a new
-         * value is less than NGX_TIMER_LAZY_DELAY milliseconds: this allows
-         * to minimize the rbtree operations for fast connections.
+         * Use the previous timer value if a difference between them is less
+         * then NGX_TIMER_LAZY_DELAY milliseconds.  It allows to minimize
+         * the rbtree operations for the fast connections.
          */
 
         diff = (ngx_msec_int_t) (key - ev->timer.key);
@@ -81,7 +88,11 @@ ngx_event_add_timer(ngx_event_t *ev, ngx_msec_t timer)
                    "event timer add: %d: %M:%M",
                     ngx_event_ident(ev->data), timer, ev->timer.key);
 
+    ngx_mutex_lock(ngx_event_timer_mutex);
+
     ngx_rbtree_insert(&ngx_event_timer_rbtree, &ev->timer);
+
+    ngx_mutex_unlock(ngx_event_timer_mutex);
 
     ev->timer_set = 1;
 }
