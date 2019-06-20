@@ -518,7 +518,7 @@ ngx_epoll_process_events(ngx_cycle_t *cycle, ngx_msec_t timer, ngx_uint_t flags)
                 ngx_locked_post_event(rev, queue);
 
             } else {
-                rev->handler(rev);
+                rev->handler(rev); //读数据操作
             }
         }
 
@@ -537,7 +537,7 @@ ngx_epoll_process_events(ngx_cycle_t *cycle, ngx_msec_t timer, ngx_uint_t flags)
                 ngx_locked_post_event(wev, &ngx_posted_events);
 
             } else {
-                wev->handler(wev);
+                wev->handler(wev); //写数据操作
             }
         }
     }

@@ -288,7 +288,7 @@ main(int argc, char *const *argv)
         ngx_modules[i]->index = ngx_max_module++;
     }
 
-    cycle = ngx_init_cycle(&init_cycle);
+    cycle = ngx_init_cycle(&init_cycle); //初始化main
     if (cycle == NULL) {
         if (ngx_test_config) {
             ngx_log_error(NGX_LOG_EMERG, log, 0,
@@ -350,10 +350,10 @@ main(int argc, char *const *argv)
 #endif
 
     if (ngx_process == NGX_PROCESS_MASTER) {
-        ngx_master_process_cycle(cycle);
+        ngx_master_process_cycle(cycle); //进入主循环
 
     } else {
-        ngx_single_process_cycle(cycle);
+        ngx_single_process_cycle(cycle); //进入主循环
     }
 
     return 0;

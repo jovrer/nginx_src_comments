@@ -242,7 +242,7 @@ ngx_process_events_and_timers(ngx_cycle_t *cycle)
 
     delta = ngx_current_msec;
 
-    (void) ngx_process_events(cycle, timer, flags);
+    (void) ngx_process_events(cycle, timer, flags);// 对应event/modules/下各种event模式处理例程
 
     delta = ngx_current_msec - delta;
 
