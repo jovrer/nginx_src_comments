@@ -799,7 +799,7 @@ ngx_event_process_init(ngx_cycle_t *cycle)
 
 #else
 
-        rev->handler = ngx_event_accept;
+        rev->handler = ngx_event_accept; //accept link
 
         if (ngx_use_accept_mutex) {
             continue;

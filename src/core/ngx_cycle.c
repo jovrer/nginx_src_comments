@@ -174,7 +174,7 @@ ngx_init_cycle(ngx_cycle_t *old_cycle)
             continue;
         }
 
-        module = ngx_modules[i]->ctx;
+        module = ngx_modules[i]->ctx;//ngx_core_module|ngx_errlog_module|ngx_events_module|ngx_http_module
 
         if (module->create_conf) {
             rv = module->create_conf(cycle);

@@ -270,7 +270,7 @@ ngx_single_process_cycle(ngx_cycle_t *cycle)
 
     for (i = 0; ngx_modules[i]; i++) {
         if (ngx_modules[i]->init_process) {
-            if (ngx_modules[i]->init_process(cycle) == NGX_ERROR) {
+            if (ngx_modules[i]->init_process(cycle) == NGX_ERROR) {// 仅ngx_event_core_module有此handle
                 /* fatal */
                 exit(2);
             }
