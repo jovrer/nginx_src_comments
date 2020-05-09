@@ -163,7 +163,7 @@ ngx_conf_parse(ngx_conf_t *cf, ngx_str_t *filename)
             goto done;
         }
 
-        if (cf->handler) {
+        if (cf->handler) {//?
 
             /*
              * the custom handler, i.e., that is used in the http's
