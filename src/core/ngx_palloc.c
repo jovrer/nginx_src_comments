@@ -196,7 +196,7 @@ ngx_pfree(ngx_pool_t *pool, void *p)
 
 
 void *
-ngx_pcalloc(ngx_pool_t *pool, size_t size)
+ngx_pcalloc(ngx_pool_t *pool, size_t size) //效率分配
 {
     void *p;
 

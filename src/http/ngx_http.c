@@ -808,7 +808,7 @@ ngx_http_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
             ls->addr_ntop = 1;
 
-            ls->handler = ngx_http_init_connection;
+            ls->handler = ngx_http_init_connection; //init http解析handle
 
             cscf = in_addr[a].core_srv_conf;
             ls->pool_size = cscf->connection_pool_size;

@@ -613,7 +613,7 @@ ngx_event_process_init(ngx_cycle_t *cycle)
 
         if (ngx_modules[m]->ctx_index == ecf->use) {
             module = ngx_modules[m]->ctx;
-            if (module->actions.init(cycle, ngx_timer_resolution) == NGX_ERROR)
+            if (module->actions.init(cycle, ngx_timer_resolution) == NGX_ERROR)//仅ngx_epoll_module
             {
                 /* fatal */
                 exit(2);

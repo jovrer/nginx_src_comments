@@ -586,7 +586,7 @@ ngx_init_cycle(ngx_cycle_t *old_cycle)
     pool->log = cycle->log;
 
     for (i = 0; ngx_modules[i]; i++) {
-        if (ngx_modules[i]->init_module) {
+        if (ngx_modules[i]->init_module) {//ngx_event_core_module
             if (ngx_modules[i]->init_module(cycle) != NGX_OK) {
                 /* fatal */
                 exit(1);
