@@ -185,7 +185,7 @@ ngx_conf_parse(ngx_conf_t *cf, ngx_str_t *filename)
         }
 
 
-        rc = ngx_conf_handler(cf, rc);
+        rc = ngx_conf_handler(cf, rc); //bingo
 
         if (rc == NGX_ERROR) {
             goto failed;
@@ -325,7 +325,7 @@ ngx_conf_handler(ngx_conf_t *cf, ngx_int_t last)
             } else if (cmd->type & NGX_MAIN_CONF) {
                 conf = &(((void **) cf->ctx)[ngx_modules[i]->index]);
 
-            } else if (cf->ctx) {
+            } else if (cf->ctx) { //http模块
                 confp = *(void **) ((char *) cf->ctx + cmd->conf);
 
                 if (confp) {
